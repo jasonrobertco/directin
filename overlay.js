@@ -49,6 +49,12 @@ function sendMessage(msg) {
   });
 }
 
+
+// Setup-only: role autocomplete derived from selected companies
+let setupRoleCatalog = [];        // array of strings (job titles)
+let setupSelectedRoleTitles = []; // array of strings the user picked
+let roleCatalogLoading = false;
+
 // ===============================
 // DOM refs (setup)
 // ===============================
@@ -207,37 +213,59 @@ function getLogoUrl(domain) {
 // ===============================
 // Relevance filtering (MVP heuristic)
 // ===============================
-function isRelevantJob(job) {
-  const title = (job.title || "").toLowerCase();
 
-  // Example exclusions for your MVP (tune later)
-  if (title.includes("manager") || title.includes("head")) return false;
-  if (title.includes("senior") || title.includes("staff") || title.includes("principal") || title.includes("lead")) return false;
+async function rebuildSetupRoleCatalog() {
+  setupRoleCatalog = [];
+  roleCatalogLoading = true;
 
-  const roles = userProfile?.roles || [];
-  if (roles.length === 0) {
-    // fallback: SWE-ish only
-    return title.includes("engineer") || title.includes("software");
+  // Nothing selected yet
+  if (!companies || companies.length === 0) {
+    roleCatalogLoading = false;
+    return;
   }
 
-  const wants = new Set(roles);
+  // Collect job titles across selected company boards
+  const titleSet = new Set();
 
-  const isIntern = title.includes("intern");
-  const isML = title.includes("machine learning") || title.includes("ml") || title.includes("ai");
-  const isData = title.includes("data");
-  const isHW = title.includes("hardware") || title.includes("embedded") || title.includes("firmware");
+  for (const c of companies) {
+    // Validate board + fetch jobs
+    const res = await sendMessage({
+      type: "FETCH_COMPANY_JOBS",
+      boardSlug: c.boardSlug,
+      companyName: c.name
+    });
 
-  const isEng = title.includes("engineer") || title.includes("software");
+    if (!res || res.error) continue;
 
-  if (wants.has("intern") && isIntern) return true;
-  if (wants.has("ml") && isML) return true;
-  if (wants.has("data") && isData) return true;
-  if (wants.has("hardware") && isHW) return true;
+    const jobs = res.jobs || [];
+    for (const j of jobs) {
+      const t = String(j.title || "").trim();
+      if (!t) continue;
 
-  // SWE is the broadest
-  if (wants.has("swe") && isEng) return true;
+      // Optional: if you ONLY want engineering-ish suggestions, uncomment:
+      // const low = t.toLowerCase();
+      // if (!(low.includes("engineer") || low.includes("software") || low.includes("intern") || low.includes("data") || low.includes("ml"))) continue;
 
-  return false;
+      titleSet.add(t);
+    }
+  }
+
+  setupRoleCatalog = Array.from(titleSet).sort((a, b) => a.localeCompare(b));
+  roleCatalogLoading = false;
+}
+
+function isRelevantJob(job) {
+  const title = String(job.title || "").toLowerCase();
+
+  // keep your senior/manager exclusions if you want
+  if (title.includes("senior") || title.includes("staff") || title.includes("principal") || title.includes("lead")) return false;
+  if (title.includes("manager") || title.includes("director") || title.includes("head")) return false;
+
+  const roleTitles = userProfile?.roleTitles || [];
+  if (roleTitles.length === 0) return true;
+
+  // Match if job title contains ANY selected role title (or vice versa)
+  return roleTitles.some(rt => title.includes(rt.toLowerCase()));
 }
 
 function getMostRecentRelevant(jobs) {
@@ -436,55 +464,86 @@ function removeRoleKey(key) {
 }
 
 function renderSelectedRoles() {
-  if (!selectedRolesDiv) return;
   selectedRolesDiv.innerHTML = "";
 
-  setupSelectedRoleKeys.forEach((key) => {
-    const role = ROLE_OPTIONS.find((r) => r.key === key);
-    const label = role ? role.label : key;
-
+  setupSelectedRoleTitles.forEach((title) => {
     const row = document.createElement("div");
     row.className = "selected-item";
     row.innerHTML = `
-      <div><b>${label}</b></div>
+      <div><b>${title}</b></div>
       <button class="btn small">Remove</button>
     `;
 
-    row.querySelector("button").onclick = () => removeRoleKey(key);
+    row.querySelector("button").onclick = () => {
+      setupSelectedRoleTitles = setupSelectedRoleTitles.filter(t => t !== title);
+      renderSelectedRoles();
+    };
+
     selectedRolesDiv.appendChild(row);
   });
 }
 
-function renderRoleSuggestions(query) {
-  if (!roleSuggestions) return;
 
+function renderRoleSuggestions(query) {
   const q = String(query || "").trim().toLowerCase();
+
+  roleSuggestions.innerHTML = "";
+
   if (!q) {
     roleSuggestions.style.display = "none";
-    roleSuggestions.innerHTML = "";
     return;
   }
 
-  const matches = ROLE_OPTIONS
-    .filter((r) => r.label.toLowerCase().includes(q) || r.key.includes(q))
-    .slice(0, 8);
+  if (roleCatalogLoading) {
+    const row = document.createElement("div");
+    row.className = "suggestion";
+    row.textContent = "Loading roles from selected companies…";
+    roleSuggestions.appendChild(row);
+    roleSuggestions.style.display = "block";
+    return;
+  }
 
-  roleSuggestions.innerHTML = "";
+  if (!setupRoleCatalog.length) {
+    const row = document.createElement("div");
+    row.className = "suggestion";
+    row.textContent = "Select companies first to load role suggestions.";
+    roleSuggestions.appendChild(row);
+    roleSuggestions.style.display = "block";
+    return;
+  }
+
+  const matches = setupRoleCatalog
+    .filter(t => t.toLowerCase().includes(q))
+    .slice(0, 10);
+
   if (matches.length === 0) {
     roleSuggestions.style.display = "none";
     return;
   }
 
-  matches.forEach((r) => {
+  for (const title of matches) {
     const row = document.createElement("div");
     row.className = "suggestion";
-    row.innerHTML = `<div>${r.label}</div><div class="smallmuted">${r.key}</div>`;
-    row.onclick = () => addRoleKey(r.key);
+    row.textContent = title;
+
+    row.onclick = () => {
+      if (setupSelectedRoleTitles.includes(title)) return;
+      if (setupSelectedRoleTitles.length >= MAX_ROLES) {
+        showToast(`Max ${MAX_ROLES} roles`);
+        return;
+      }
+      setupSelectedRoleTitles.push(title);
+      roleSearch.value = "";
+      roleSuggestions.style.display = "none";
+      renderSelectedRoles();
+    };
+
     roleSuggestions.appendChild(row);
-  });
+  }
 
   roleSuggestions.style.display = "block";
 }
+
 
 // ---- Companies: suggestions + add/remove ----
 function renderCompanySuggestions(query) {
@@ -508,8 +567,8 @@ function renderCompanySuggestions(query) {
       const row = document.createElement("div");
       row.className = "suggestion";
       row.innerHTML = `<div>${c.name}</div><div class="smallmuted">${c.boardSlug}</div>`;
-      row.onclick = () => {
-        addCompany(c);
+      row.onclick = async () => {
+        await addCompany(c);
         companySuggestions.style.display = "none";
         if (companySearch) companySearch.value = "";
       };
@@ -558,7 +617,7 @@ async function addCompanyFromInput(input) {
   // If exists in directory, add immediately (richer info)
   const found = COMPANY_DIRECTORY.find((c) => c.boardSlug === slug);
   if (found) {
-    addCompany(found);
+    await addCompany(found);
     if (companySearch) companySearch.value = "";
     if (companySuggestions) companySuggestions.style.display = "none";
     return;
@@ -566,6 +625,9 @@ async function addCompanyFromInput(input) {
 
   // Unknown slug: validate by calling Greenhouse once.
   showToast("Validating…");
+  
+  // Set loading state so role search shows feedback immediately
+  roleCatalogLoading = true;
 
   const res = await sendMessage({
     type: "FETCH_COMPANY_JOBS",
@@ -580,7 +642,7 @@ async function addCompanyFromInput(input) {
 
   const apiName = res.company?.name || titleizeSlug(slug);
 
-  addCompany({
+  await addCompany({
     id: slug,
     name: apiName,
     boardSlug: slug,
@@ -601,7 +663,7 @@ async function addCompanyFromInput(input) {
   if (companySuggestions) companySuggestions.style.display = "none";
 }
 
-function addCompany(c) {
+async function addCompany(c) {
   if (companies.length >= MAX_COMPANIES) {
     showToast(`Max ${MAX_COMPANIES} companies`);
     return;
@@ -620,11 +682,15 @@ function addCompany(c) {
   });
 
   renderSelectedCompanies();
+  
+  // Rebuild role catalog whenever companies change
+  await rebuildSetupRoleCatalog();
 }
 
-function removeCompany(companyId) {
+async function removeCompany(companyId) {
   companies = companies.filter((c) => c.id !== companyId);
   renderSelectedCompanies();
+  await rebuildSetupRoleCatalog();
 }
 
 function renderSelectedCompanies() {

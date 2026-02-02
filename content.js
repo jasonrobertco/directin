@@ -237,20 +237,19 @@ function buildUI() {
   }
   handle.appendChild(dots);
 
-  // Blue cover: covers handle when idle; slides left on hover
-const blueCover = document.createElement("div");
-blueCover.style.position = "absolute";
-blueCover.style.top = "0";
-blueCover.style.left = "0";
-blueCover.style.width = px(DOCK_W);
-blueCover.style.height = px(TILE);
-blueCover.style.background = BRAND_BLUE;
-blueCover.style.transition = "transform 170ms ease";
-blueCover.style.willChange = "transform";
-blueCover.style.transform = "translateX(0)"; // idle: covers handle
-const sliderEl = blueCover; // keep old naming concept: this is what we transform on hover
+  // Blue cover (slider): covers handle when idle; slides left on hover
+  const slider = document.createElement("div");
+  slider.style.position = "absolute";
+  slider.style.top = "0";
+  slider.style.left = "0";
+  slider.style.width = px(DOCK_W);
+  slider.style.height = px(TILE);
+  slider.style.background = BRAND_BLUE;
+  slider.style.transition = "transform 170ms ease";
+  slider.style.willChange = "transform";
+  slider.style.transform = "translateX(0)"; // idle: covers handle
 
-// Logo area: fixed in the left square (DOES NOT MOVE)
+  // Logo area: fixed in the left square (DOES NOT MOVE)
 const logoWrap = document.createElement("div");
 logoWrap.style.position = "absolute";
 logoWrap.style.left = "0";
@@ -279,11 +278,11 @@ logoImg.onerror = () => {
 
 logoWrap.appendChild(logoImg);
 
-// Assemble layers (order matters)
-dockClip.appendChild(handle);     // bottom
-dockClip.appendChild(blueCover);  // middle (slides)
-dockClip.appendChild(logoWrap);   // top (fixed)
-dockOuter.appendChild(dockClip);
+  // Assemble layers (order matters)
+  dockClip.appendChild(handle);     // bottom
+  dockClip.appendChild(slider);     // middle (slides)
+  dockClip.appendChild(logoWrap);   // top (fixed)
+  dockOuter.appendChild(dockClip);
 
 
 
@@ -363,7 +362,7 @@ dockOuter.appendChild(dockClip);
     iframe,
     dockOuter,
     dockClip,
-    slider: sliderEl,
+    slider,
     minusBtn,
     badge
   };

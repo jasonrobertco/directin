@@ -24,6 +24,16 @@
     <div class="sub">Pick up to 3 roles and up to 3 companies.</div>
 
     <div class="section">
+      <div class="section-title">Companies (max 3)</div>
+      <div class="row">
+        <input id="companySearch" class="input" placeholder="Search or paste Greenhouse board URL…" />
+        <button id="addCompanyBtn" class="btn">Add</button>
+      </div>
+      <div id="companySuggestions" class="suggestions" style="display:none;"></div>
+      <div id="selectedCompanies" class="selected"></div>
+    </div>
+
+    <div class="section">
       <div class="section-title">Roles (max 3)</div>
 
       <div class="row">
@@ -32,16 +42,6 @@
 
       <div id="roleSuggestions" class="suggestions" style="display:none;"></div>
       <div id="selectedRoles" class="selected"></div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">Companies (max 3)</div>
-      <div class="row">
-        <input id="companySearch" class="input" placeholder="Search or paste Greenhouse board URL…" />
-        <button id="addCompanyBtn" class="btn">Add</button>
-      </div>
-      <div id="companySuggestions" class="suggestions" style="display:none;"></div>
-      <div id="selectedCompanies" class="selected"></div>
     </div>
 
     <button id="finishSetupBtn" class="btn primary">Finish</button>
