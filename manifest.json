@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Get Off LinkedIn",
   "description": "Show real job openings and get off LinkedIn.",
-  "version": "0.1",
+  "version": "0.2",
 
   "permissions": ["storage"],
   "host_permissions": ["https://boards.greenhouse.io/*"],
@@ -20,8 +20,18 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["overlay.html", "overlay.css", "overlay.js"],
+      "resources": [
+        "overlay.html",
+        "overlay.css",
+        "overlay.js",
+        "directinlogo.png",
+        "directinlogo.svg"
+      ],
       "matches": ["https://www.linkedin.com/*"]
     }
-  ]
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: https://logo.clearbit.com"
+  }
 }
