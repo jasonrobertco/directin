@@ -124,6 +124,94 @@ function isRelevantTitle(title, roles) {
   return false;
 }
 
+// Replace your existing isRelevantTitle() in content.js with this version,
+// and update refreshBadgeFromStorage() to read profile.roleQueries.
+
+// --- Matching helpers (lightweight copy) ---
+const SENIORITY_BLOCKLIST = ["senior", "staff", "principal", "lead", "manager", "director", "head"];
+
+const TOKEN_ALIASES = {
+  engineer: ["engineer", "engineering"],
+  engineering: ["engineering", "engineer"],
+  intern: ["intern", "internship"],
+  internship: ["internship", "intern"],
+  grad: ["grad", "graduate"],
+  graduate: ["graduate", "grad"],
+};
+
+function normalize(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function expandQuery(q) {
+  let s = normalize(q);
+  s = s.replace(/\bswe\b/g, "software engineer");
+  s = s.replace(/\bsde\b/g, "software engineer");
+  s = s.replace(/\bml\b/g, "machine learning");
+  return s;
+}
+
+function tokenize(s) {
+  const n = normalize(s);
+  return n ? n.split(" ").filter(Boolean) : [];
+}
+
+function hasSeniority(titleNorm) {
+  return SENIORITY_BLOCKLIST.some((w) => titleNorm.includes(w));
+}
+
+function titleTokenSet(title) {
+  const t = normalize(title);
+  return new Set(t ? t.split(" ") : []);
+}
+
+function tokenMatchesTitle(token, tset) {
+  const aliases = TOKEN_ALIASES[token] || [token];
+  return aliases.some((a) => {
+    const an = normalize(a);
+    if (!an) return false;
+    const parts = an.split(" ").filter(Boolean);
+    return parts.every((p) => tset.has(p));
+  });
+}
+
+function scoreTitleAgainstQuery(title, query) {
+  const titleNorm = normalize(title);
+  if (hasSeniority(titleNorm)) return 0;
+
+  const tset = titleTokenSet(title);
+  const qTokens = tokenize(expandQuery(query)).filter(
+    (w) => !["and", "of", "the", "a", "an", "to", "for"].includes(w)
+  );
+
+  if (qTokens.length === 0) return 0;
+
+  let matched = 0;
+  for (const tok of qTokens) {
+    if (tokenMatchesTitle(tok, tset)) matched += 1;
+  }
+
+  return matched / qTokens.length;
+}
+
+function isRelevantTitle(title, roleQueries) {
+  const queries = Array.isArray(roleQueries) ? roleQueries : [];
+  if (queries.length === 0) {
+    // fallback: keep old behavior if nothing configured
+    const t = normalize(title);
+    return t.includes("engineer") || t.includes("software");
+  }
+
+  let best = 0;
+  for (const q of queries) best = Math.max(best, scoreTitleAgainstQuery(title, q));
+  return best >= 0.75; // same threshold as overlay
+}
+
+
 // ===============================
 // Global (content-script) state
 // ===============================
@@ -590,7 +678,7 @@ function refreshBadgeFromStorage() {
           const id = job?.id != null ? String(job.id) : null;
           if (!id || seen.has(id)) continue;
 
-          if (isNew(job.createdAt) && isRelevantTitle(job.title, roles)) {
+          if (isNew(job.createdAt) && isRelevantTitle(job.title, roleQueries)) {
             seen.add(id);
             total += 1;
             if (total >= BADGE_MAX) break;

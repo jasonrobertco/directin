@@ -21,7 +21,7 @@
   <!-- SETUP -->
   <div id="setupView" class="view" style="display:none;">
     <div class="h1">Setup (one-time)</div>
-    <div class="sub">Pick up to 3 roles and up to 3 companies.</div>
+    <div class="sub">Add up to 3 companies and up to 3 alert keywords. We’ll match future job posts against your keywords.</div>
 
     <div class="section">
       <div class="section-title">Companies (max 3)</div>
@@ -34,14 +34,16 @@
     </div>
 
     <div class="section">
-      <div class="section-title">Roles (max 3)</div>
+      <div class="section-title">Alert keywords (max 3)</div>
 
       <div class="row">
-        <input id="roleSearch" class="input" placeholder="Search roles…" />
+        <input id="roleSearch" class="input" placeholder='e.g., "software engineer intern"' />
       </div>
 
       <div id="roleSuggestions" class="suggestions" style="display:none;"></div>
       <div id="selectedRoles" class="selected"></div>
+
+      <div class="hint">Tip: Try templates like “SWE Intern”, “Software Engineer Intern”, “New Grad Software Engineer”.</div>
     </div>
 
     <button id="finishSetupBtn" class="btn primary">Finish</button>
