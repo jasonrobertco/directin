@@ -74,6 +74,7 @@ const MODAL_RADIUS = 16;
 // Badge logic
 const NEW_DAYS = 7;
 const BADGE_MAX = 99;
+const BADGE_COUNT_CAP = BADGE_MAX + 1; // 100 => enables "99+"
 
 // Assets
 const LOGO_SVG_URL = chrome.runtime.getURL("directinlogo.svg");
@@ -93,36 +94,7 @@ function daysAgo(iso) {
 function isNew(iso) { return daysAgo(iso) <= NEW_DAYS; }
 
 // Minimal relevance heuristic for badge counting
-function isRelevantTitle(title, roles) {
-  const t = String(title || "").toLowerCase();
 
-  // Filter out senior+ and management
-  if (t.includes("senior") || t.includes("staff") || t.includes("principal") || t.includes("lead")) return false;
-  if (t.includes("manager") || t.includes("head of") || t.includes("director")) return false;
-
-  // If no roles provided, accept general eng/software
-  if (!roles || roles.length === 0) return (t.includes("engineer") || t.includes("software"));
-
-  const wantsSWE = roles.includes("swe");
-  const wantsML = roles.includes("ml");
-  const wantsData = roles.includes("data");
-  const wantsHW = roles.includes("hardware");
-  const wantsIntern = roles.includes("intern");
-
-  const isIntern = t.includes("intern");
-  const isML = t.includes("machine learning") || t.includes("ml ") || t.includes("ml/");
-  const isData = t.includes("data");
-  const isHW = t.includes("hardware") || t.includes("embedded");
-  const isEng = t.includes("engineer") || t.includes("software");
-
-  if (wantsIntern && isIntern) return true;
-  if (wantsML && (isML || (isEng && t.includes("ai")))) return true;
-  if (wantsData && isData) return true;
-  if (wantsHW && isHW) return true;
-  if (wantsSWE && isEng) return true;
-
-  return false;
-}
 
 // Replace your existing isRelevantTitle() in content.js with this version,
 // and update refreshBadgeFromStorage() to read profile.roleQueries.
@@ -147,27 +119,32 @@ function normalize(s) {
     .trim();
 }
 
+function expandAbbrev(normStr) {
+  return String(normStr || "")
+    .replace(/\bswe\b/g, "software engineer")
+    .replace(/\bsde\b/g, "software engineer")
+    .replace(/\bml\b/g, "machine learning");
+}
+
 function expandQuery(q) {
-  let s = normalize(q);
-  s = s.replace(/\bswe\b/g, "software engineer");
-  s = s.replace(/\bsde\b/g, "software engineer");
-  s = s.replace(/\bml\b/g, "machine learning");
-  return s;
+  return expandAbbrev(normalize(q));
 }
 
 function tokenize(s) {
-  const n = normalize(s);
+  const n = expandAbbrev(normalize(s));
   return n ? n.split(" ").filter(Boolean) : [];
 }
+
 
 function hasSeniority(titleNorm) {
   return SENIORITY_BLOCKLIST.some((w) => titleNorm.includes(w));
 }
 
 function titleTokenSet(title) {
-  const t = normalize(title);
+  const t = expandAbbrev(normalize(title));
   return new Set(t ? t.split(" ") : []);
 }
+
 
 function tokenMatchesTitle(token, tset) {
   const aliases = TOKEN_ALIASES[token] || [token];
@@ -180,10 +157,12 @@ function tokenMatchesTitle(token, tset) {
 }
 
 function scoreTitleAgainstQuery(title, query) {
-  const titleNorm = normalize(title);
+  const titleNorm = expandAbbrev(normalize(title));
   if (hasSeniority(titleNorm)) return 0;
 
   const tset = titleTokenSet(title);
+
+  // expandQuery() should already normalize+expand abbreviations for the query
   const qTokens = tokenize(expandQuery(query)).filter(
     (w) => !["and", "of", "the", "a", "an", "to", "for"].includes(w)
   );
@@ -195,8 +174,15 @@ function scoreTitleAgainstQuery(title, query) {
     if (tokenMatchesTitle(tok, tset)) matched += 1;
   }
 
-  return matched / qTokens.length;
+  let score = matched / qTokens.length;
+
+  // Bonus if the full phrase appears (helps borderline cases)
+  const qNorm = expandAbbrev(normalize(query));
+  if (qNorm && titleNorm.includes(qNorm)) score = Math.min(1, score + 0.1);
+
+  return score;
 }
+
 
 function isRelevantTitle(title, roleQueries) {
   const queries = Array.isArray(roleQueries) ? roleQueries : [];
@@ -338,33 +324,33 @@ function buildUI() {
   slider.style.transform = "translateX(0)"; // idle: covers handle
 
   // Logo area: fixed in the left square (DOES NOT MOVE)
-const logoWrap = document.createElement("div");
-logoWrap.style.position = "absolute";
-logoWrap.style.left = "0";
-logoWrap.style.top = "0";
-logoWrap.style.width = px(TILE);
-logoWrap.style.height = px(TILE);
-logoWrap.style.display = "flex";
-logoWrap.style.alignItems = "center";
-logoWrap.style.justifyContent = "center";
-logoWrap.style.zIndex = "2"; // above the cover
+  const logoWrap = document.createElement("div");
+  logoWrap.style.position = "absolute";
+  logoWrap.style.left = "0";
+  logoWrap.style.top = "0";
+  logoWrap.style.width = px(TILE);
+  logoWrap.style.height = px(TILE);
+  logoWrap.style.display = "flex";
+  logoWrap.style.alignItems = "center";
+  logoWrap.style.justifyContent = "center";
+  logoWrap.style.zIndex = "2"; // above the cover
 
-const logoImg = document.createElement("img");
-logoImg.src = LOGO_SVG_URL;
-logoImg.alt = "DirectIn";
-logoImg.draggable = false;
-logoImg.style.width = "100%";
-logoImg.style.height = "100%";
-logoImg.style.objectFit = "cover";
-logoImg.style.display = "block";
-logoImg.style.boxShadow = "none";
-logoImg.style.filter = "none";
-logoImg.onerror = () => {
-  logoImg.onerror = null;
-  logoImg.src = LOGO_PNG_URL;
-};
+  const logoImg = document.createElement("img");
+  logoImg.src = LOGO_SVG_URL;
+  logoImg.alt = "DirectIn";
+  logoImg.draggable = false;
+  logoImg.style.width = "100%";
+  logoImg.style.height = "100%";
+  logoImg.style.objectFit = "cover";
+  logoImg.style.display = "block";
+  logoImg.style.boxShadow = "none";
+  logoImg.style.filter = "none";
+  logoImg.onerror = () => {
+    logoImg.onerror = null;
+    logoImg.src = LOGO_PNG_URL;
+  };
 
-logoWrap.appendChild(logoImg);
+  logoWrap.appendChild(logoImg);
 
   // Assemble layers (order matters)
   dockClip.appendChild(handle);     // bottom
@@ -424,25 +410,44 @@ logoWrap.appendChild(logoImg);
   // Badge pinned top-right of dock (outside corner for "notification")
   const badge = document.createElement("div");
   badge.style.position = "absolute";
-  badge.style.top = px(-8);
-  badge.style.right = px(-8);
+  badge.style.top = px(-10);
+
+  // Anchor to dockOuter right edge; pill grows LEFT
+  badge.style.left = "auto";
+  badge.style.right = px(-6);
+
+  // Make it slide smoothly with the dock using transform (avoid "jump")
+  badge.style.transform = "translateX(0)";
+  badge.style.transition = "transform 170ms ease, opacity 170ms ease";
+  badge.style.willChange = "transform";
+
   badge.style.zIndex = "6";
-  badge.style.minWidth = px(18);
-  badge.style.height = px(18);
+  badge.style.height = px(20);
+  badge.style.minWidth = px(20);
   badge.style.padding = "0 6px";
   badge.style.borderRadius = "999px";
+
   badge.style.background = BADGE_RED;
   badge.style.color = "#fff";
+  badge.style.display = "none";       // setBadgeCount() controls visibility
+  badge.style.pointerEvents = "none";
+
+  badge.style.fontFamily =
+    "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif";
   badge.style.fontSize = "12px";
   badge.style.fontWeight = "800";
-  badge.style.display = "none";
+  badge.style.webkitFontSmoothing = "antialiased";
+  badge.style.textRendering = "geometricPrecision";
+  badge.style.lineHeight = px(20);
   badge.style.alignItems = "center";
   badge.style.justifyContent = "center";
-  badge.style.lineHeight = "18px";
-  badge.style.boxShadow = "0 10px 22px rgba(0,0,0,0.18)";
+
+  // Append ONCE (only to dockOuter)
   dockOuter.appendChild(badge);
 
+  // dockOuter already gets appended later in your code:
   document.body.appendChild(dockOuter);
+
 
   // Store refs
   ui = {
@@ -451,9 +456,11 @@ logoWrap.appendChild(logoImg);
     dockOuter,
     dockClip,
     slider,
+    logoWrap,
     minusBtn,
     badge
   };
+  pinBadgeToTile();
 
   // Attach behaviors
   attachOverlayMessaging();
@@ -549,6 +556,42 @@ function closeCompletely() {
 // ===============================
 // Dock hover: square -> pill + slide
 // ===============================
+function pinBadgeToTile() {
+  if (!ui?.badge || !ui?.dockOuter || !ui?.logoWrap) return;
+
+  const outer = ui.dockOuter.getBoundingClientRect();
+  const logo = ui.logoWrap.getBoundingClientRect();
+
+  // how much the dock extends to the right of the tile (0 collapsed, ~handle width expanded)
+  const delta = outer.right - logo.right;
+
+  // keep same outside offset you wanted: -6px when collapsed
+  ui.badge.style.right = px(delta - 6);
+}
+
+const BADGE_OUTSET = 6; // how far the badge protrudes to the right
+
+function syncBadgeToTileCorner() {
+  if (!ui?.badge || !ui?.dockOuter) return;
+
+  // Dock expands LEFT because `right` is fixed. Width animates from TILE -> DOCK_W.
+  const w = ui.dockOuter.getBoundingClientRect().width;
+  const delta = w - TILE; // 0 when collapsed, ~HANDLE_W when expanded
+
+  ui.badge.style.right = px(delta - BADGE_OUTSET);
+}
+
+
+function bumpBadgeSync(durationMs = 190) {
+  const start = performance.now();
+  function tick(now) {
+    syncBadgeToTileCorner();
+    if (now - start < durationMs) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+
 function setDockHover(on) {
   if (!ui) return;
 
@@ -561,6 +604,11 @@ function setDockHover(on) {
   // Minus bubble only on hover
   ui.minusBtn.style.display = on ? "block" : "none";
   ui.minusBtn.style.opacity = on ? "1" : "0";
+  bumpBadgeSync();
+  requestAnimationFrame(pinBadgeToTile);
+  if (ui.badge) {
+  ui.badge.style.transform = on ? `translateX(-${HANDLE_W}px)` : "translateX(0)";
+}
 }
 
 // ===============================
@@ -622,7 +670,7 @@ function attachDockInteractions() {
     else setDockHover(ui.dockOuter.matches(":hover"));
 
     if (e?.pointerId != null) {
-      try { ui.dockOuter.releasePointerCapture(e.pointerId); } catch {}
+      try { ui.dockOuter.releasePointerCapture(e.pointerId); } catch { }
     }
   }
 
@@ -643,7 +691,9 @@ function attachDockInteractions() {
 // ===============================
 function setBadgeCount(n) {
   if (!ui) return;
-  const count = Math.max(0, Math.min(BADGE_MAX, Number(n) || 0));
+
+  const raw = Math.max(0, Number(n) || 0);
+  const count = Math.min(raw, BADGE_COUNT_CAP); // 0..100 (if BADGE_MAX=99)
 
   if (count <= 0) {
     ui.badge.style.display = "none";
@@ -652,21 +702,25 @@ function setBadgeCount(n) {
   }
 
   ui.badge.style.display = "flex";
-  ui.badge.textContent = count >= BADGE_MAX ? `${BADGE_MAX}+` : String(count);
+  ui.badge.textContent = count >= BADGE_COUNT_CAP ? `${BADGE_MAX}+` : String(count);
 }
+
 
 function refreshBadgeFromStorage() {
   chrome.storage.local.get(
     [STORAGE_BADGE_OVERRIDE_KEY, STORAGE_PROFILE_KEY, STORAGE_CACHE_KEY],
     (data) => {
-      const override = data[STORAGE_BADGE_OVERRIDE_KEY];
-      if (typeof override === "number") {
-        setBadgeCount(override);
-        return;
-      }
+      // const override = data[STORAGE_BADGE_OVERRIDE_KEY];
+      // if (typeof override === "number") {
+      //   setBadgeCount(override);
+      //   return;
+      // }
 
+      // const profile = data[STORAGE_PROFILE_KEY] || {};
+      // const roles = profile.roles || [];
+      // const cache = data[STORAGE_CACHE_KEY] || {};
       const profile = data[STORAGE_PROFILE_KEY] || {};
-      const roles = profile.roles || [];
+      const roleQueries = Array.isArray(profile.roleQueries) ? profile.roleQueries : [];
       const cache = data[STORAGE_CACHE_KEY] || {};
 
       const seen = new Set();
@@ -674,20 +728,38 @@ function refreshBadgeFromStorage() {
 
       for (const companyId of Object.keys(cache)) {
         const jobs = cache[companyId]?.jobs || [];
+
         for (const job of jobs) {
           const id = job?.id != null ? String(job.id) : null;
-          if (!id || seen.has(id)) continue;
+          if (!id) continue;
 
-          if (isNew(job.createdAt) && isRelevantTitle(job.title, roleQueries)) {
-            seen.add(id);
-            total += 1;
-            if (total >= BADGE_MAX) break;
-          }
+          // avoid collisions across boards
+          const key = `${companyId}:${id}`;
+          if (seen.has(key)) continue;
+
+          // count ALL matches present (no date filter)
+          if (!isRelevantTitle(job.title, roleQueries)) continue;
+
+          seen.add(key);
+          total += 1;
+
+          if (total >= BADGE_COUNT_CAP) break;
         }
-        if (total >= BADGE_MAX) break;
-      }
 
+        if (total >= BADGE_COUNT_CAP) break;
+      }
+      console.log("[DirectIn] badge breakdown", {
+        total,
+        roleQueries,
+        perCompany: Object.fromEntries(
+          Object.keys(cache).map(cid => [
+            cid,
+            (cache[cid]?.jobs || []).filter(j => isRelevantTitle(j.title, roleQueries)).length
+          ])
+        )
+      });
       setBadgeCount(total);
+
     }
   );
 }
@@ -784,6 +856,7 @@ function restoreDockTop() {
 // ===============================
 (function boot() {
   // Hard cleanup old remnants
+  chrome.storage.local.remove(STORAGE_BADGE_OVERRIDE_KEY);
   document.getElementById(ROOT_ID)?.remove();
   document.getElementById(DOCK_ID)?.remove();
 
@@ -792,4 +865,5 @@ function restoreDockTop() {
   restoreDockTop();
   setMinimized(true);
   setDockHover(false);
+  bumpBadgeSync();
 })();

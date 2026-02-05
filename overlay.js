@@ -129,7 +129,7 @@ let companyCache = {};               // companyId -> { fetchedAt, error, jobs, c
 
 // Setup-only state
 let setupSelectedQueries = [];       // ["software engineer intern", ...], up to MAX_QUERIES
-
+let settingsMode = false; // true when setup opened from ⚙
 // ===============================
 // UI utilities
 // ===============================
@@ -159,10 +159,35 @@ function formatDate(iso) {
   return d.toLocaleDateString();
 }
 
-function getLogoUrl(domain) {
-  if (!domain) return null;
-  return `https://logo.clearbit.com/${domain}`;
+function normalizeDomain(domain) {
+  const d = String(domain || "").trim().toLowerCase();
+  if (!d) return "";
+  return d.replace(/^https?:\/\//, "").split("/")[0];
 }
+
+function getLogoUrl(domain) {
+  const d = normalizeDomain(domain);
+  if (!d) return null;
+
+  // Small + reliable favicon fetch (cached by browser)
+  return `https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent("https://" + d)}`;
+}
+
+function attachLogoFallback(cardEl, companyName) {
+  const img = cardEl.querySelector("img.logo");
+  if (!img) return;
+
+  img.referrerPolicy = "no-referrer";
+  img.loading = "lazy";
+
+  img.onerror = () => {
+    const fallback = document.createElement("div");
+    fallback.className = "logo fallback";
+    fallback.textContent = (companyName || "?").trim().charAt(0).toUpperCase();
+    img.replaceWith(fallback);
+  };
+}
+
 
 // Parse either a slug (“stripe”) OR a Greenhouse URL.
 function slugFromGreenhouseInput(text) {
@@ -451,6 +476,7 @@ function wireEventsOnce() {
 // Setup screen
 // ===============================
 function enterSetup(prefillFromExisting) {
+  settingsMode = !!prefillFromExisting;
   if (setupView) setupView.style.display = "block";
   if (appView) appView.style.display = "none";
 
@@ -728,10 +754,29 @@ async function addCompany(c) {
   renderSelectedCompanies();
 }
 
+async function persistCompanyEdits() {
+  await storageSet({
+    trackedCompanies: companies,
+    trackedJobs,
+    companyCache,
+  });
+}
+
 async function removeCompany(companyId) {
   companies = companies.filter((c) => c.id !== companyId);
+
+  // keep cache + tracked consistent
+  delete companyCache[companyId];
+  trackedJobs = trackedJobs.filter((t) => t.companyId !== companyId);
+
   renderSelectedCompanies();
+
+  // If we're in settings mode (opened from ⚙), persist immediately so UI updates next open
+  if (settingsMode) {
+    await persistCompanyEdits();
+  }
 }
+
 
 function renderSelectedCompanies() {
   if (!selectedCompanies) return;
@@ -940,6 +985,7 @@ function renderCompanies() {
         </div>
       `;
       card.onclick = () => showCompanyJobs(c.id);
+      attachLogoFallback(card, c.name);
       companiesList.appendChild(card);
       return;
     }
@@ -959,6 +1005,7 @@ function renderCompanies() {
         </div>
       `;
       card.onclick = () => showCompanyJobs(c.id);
+      attachLogoFallback(card, c.name);
       companiesList.appendChild(card);
       return;
     }
@@ -983,6 +1030,7 @@ function renderCompanies() {
     `;
 
     card.onclick = () => showCompanyJobs(c.id);
+    attachLogoFallback(card, c.name);
     companiesList.appendChild(card);
   });
 }
