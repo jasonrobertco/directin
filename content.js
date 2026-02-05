@@ -75,6 +75,8 @@ const MODAL_RADIUS = 16;
 const NEW_DAYS = 7;
 const BADGE_MAX = 99;
 const BADGE_COUNT_CAP = BADGE_MAX + 1; // 100 => enables "99+"
+const BADGE_OUTSET = 6; // how far the badge protrudes to the right
+
 
 // Assets
 const LOGO_SVG_URL = chrome.runtime.getURL("directinlogo.svg");
@@ -413,13 +415,13 @@ function buildUI() {
   badge.style.top = px(-10);
 
   // Anchor to dockOuter right edge; pill grows LEFT
-  badge.style.left = "auto";
-  badge.style.right = px(-6);
+  // Anchor badge to the TILE's top-right corner (even when dock expands)
+// right = (dockWidth - TILE - outset)
+badge.style.left = "auto";
+badge.style.right = `calc(100% - ${TILE}px - ${BADGE_OUTSET}px)`;
 
-  // Make it slide smoothly with the dock using transform (avoid "jump")
-  badge.style.transform = "translateX(0)";
-  badge.style.transition = "transform 170ms ease, opacity 170ms ease";
-  badge.style.willChange = "transform";
+// Only fade; horizontal movement comes from dock width transition
+badge.style.transition = "opacity 170ms ease";
 
   badge.style.zIndex = "6";
   badge.style.height = px(20);
@@ -460,7 +462,6 @@ function buildUI() {
     minusBtn,
     badge
   };
-  pinBadgeToTile();
 
   // Attach behaviors
   attachOverlayMessaging();
@@ -556,20 +557,9 @@ function closeCompletely() {
 // ===============================
 // Dock hover: square -> pill + slide
 // ===============================
-function pinBadgeToTile() {
-  if (!ui?.badge || !ui?.dockOuter || !ui?.logoWrap) return;
 
-  const outer = ui.dockOuter.getBoundingClientRect();
-  const logo = ui.logoWrap.getBoundingClientRect();
 
-  // how much the dock extends to the right of the tile (0 collapsed, ~handle width expanded)
-  const delta = outer.right - logo.right;
 
-  // keep same outside offset you wanted: -6px when collapsed
-  ui.badge.style.right = px(delta - 6);
-}
-
-const BADGE_OUTSET = 6; // how far the badge protrudes to the right
 
 function syncBadgeToTileCorner() {
   if (!ui?.badge || !ui?.dockOuter) return;
@@ -581,15 +571,6 @@ function syncBadgeToTileCorner() {
   ui.badge.style.right = px(delta - BADGE_OUTSET);
 }
 
-
-function bumpBadgeSync(durationMs = 190) {
-  const start = performance.now();
-  function tick(now) {
-    syncBadgeToTileCorner();
-    if (now - start < durationMs) requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-}
 
 
 function setDockHover(on) {
@@ -604,11 +585,9 @@ function setDockHover(on) {
   // Minus bubble only on hover
   ui.minusBtn.style.display = on ? "block" : "none";
   ui.minusBtn.style.opacity = on ? "1" : "0";
-  bumpBadgeSync();
-  requestAnimationFrame(pinBadgeToTile);
-  if (ui.badge) {
-  ui.badge.style.transform = on ? `translateX(-${HANDLE_W}px)` : "translateX(0)";
-}
+  
+  // Badge position is already handled by CSS calc() on line 421
+  // No transform needed - it stays pinned to tile's right corner automatically
 }
 
 // ===============================
@@ -865,5 +844,5 @@ function restoreDockTop() {
   restoreDockTop();
   setMinimized(true);
   setDockHover(false);
-  bumpBadgeSync();
+  // Badge position is handled by CSS calc() - no manual sync needed
 })();
