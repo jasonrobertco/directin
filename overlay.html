@@ -8,7 +8,10 @@
 
 <body>
   <div class="topbar">
-    <div class="brand">Directin</div>
+    <div class="brand">
+      <img class="brand-logo" src="directinlogo.png" alt="DirectIn" />
+      <span class="brand-title">DirectIn</span>
+    </div>
     <div class="topbar-actions">
       <button id="expandBtn" class="iconbtn" title="Expand">⛶</button>
       <button id="settingsBtn" class="iconbtn" title="Preferences">⚙</button>
@@ -20,11 +23,23 @@
 
   <!-- SETUP -->
   <div id="setupView" class="view" style="display:none;">
-    <div class="h1">Setup (one-time)</div>
-    <div class="sub">Add up to 3 companies and up to 3 alert keywords. We’ll match future job posts against your keywords.</div>
+    <div class="callout">
+  <div class="calloutText">
+    <div class="calloutTitle">Preferences</div>
+    <div class="calloutBody">
+      Add big tech companies to get notified immediately when jobs are posted.
+      Track up to 10 companies and up to 3 alert keywords.
+    </div>
+  </div>
+
+  <button class="btn calloutBtn" id="goBigTechBtn">
+    Go <span class="arrow" aria-hidden="true">→</span>
+  </button>
+</div>
+
 
     <div class="section">
-      <div class="section-title">Companies (max 3)</div>
+      <div class="section-title">Companies (max 10)</div>
       <div class="row">
         <input id="companySearch" class="input" placeholder="Search or paste Greenhouse board URL…" />
         <button id="addCompanyBtn" class="btn">Add</button>
@@ -43,7 +58,8 @@
       <div id="roleSuggestions" class="suggestions" style="display:none;"></div>
       <div id="selectedRoles" class="selected"></div>
 
-      <div class="hint">Tip: Try templates like “SWE Intern”, “Software Engineer Intern”, “New Grad Software Engineer”.</div>
+      <div class="hint">Tip: Try templates like “SWE Intern”, “Software Engineer Intern”, “New Grad Software Engineer”.
+      </div>
     </div>
 
     <button id="finishSetupBtn" class="btn primary">Finish</button>

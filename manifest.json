@@ -1,20 +1,41 @@
 {
   "manifest_version": 3,
-  "name": "Get Off LinkedIn",
-  "description": "Show real job openings and get off LinkedIn.",
+  "name": "DirectIn",
+  "description": "Track job openings from job boards.",
   "version": "0.1",
-  "permissions": ["storage", "tabs"],
-  "host_permissions": ["https://boards.greenhouse.io/*"],
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://boards.greenhouse.io/*"
+  ],
   "action": {
-    "default_title": "DirectIn"
+    "default_title": "DirectIn",
+    "default_icon": {
+      "16": "directinlogo.png",
+      "32": "directinlogo.png",
+      "48": "directinlogo.png",
+      "128": "directinlogo.png"
+    }
+  },
+  "icons": {
+    "16": "directinlogo.png",
+    "32": "directinlogo.png",
+    "48": "directinlogo.png",
+    "128": "directinlogo.png"
   },
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["https://www.linkedin.com/*"],
-      "js": ["content.js"]
+      "matches": [
+        "https://www.linkedin.com/*"
+      ],
+      "js": [
+        "content.js"
+      ]
     }
   ],
   "web_accessible_resources": [
@@ -26,7 +47,9 @@
         "directinlogo.png",
         "directinlogo.svg"
       ],
-      "matches": ["https://www.linkedin.com/*"]
+      "matches": [
+        "https://www.linkedin.com/*"
+      ]
     }
   ]
 }

@@ -85,7 +85,7 @@ const toast = document.getElementById("toast");
 // Constants
 // ===============================
 const MAX_QUERIES = 3;
-const MAX_COMPANIES = 3;
+const MAX_COMPANIES = 10;
 const MAX_TRACKED = 5;
 const NEW_DAYS = 7;
 
@@ -377,6 +377,9 @@ let _eventsWired = false;
 function wireEventsOnce() {
   if (_eventsWired) return;
   _eventsWired = true;
+  if (goBigTechBtn) {
+  goBigTechBtn.onclick = () => quickAddBigTech();
+}
 
   // Topbar actions
   if (minimizeBtn) minimizeBtn.onclick = () => window.parent.postMessage({ type: "GOL_MINIMIZE" }, "*");
@@ -775,6 +778,27 @@ async function removeCompany(companyId) {
   if (settingsMode) {
     await persistCompanyEdits();
   }
+}
+
+function quickAddBigTech() {
+  const before = companies.length;
+  const existing = new Set(companies.map(c => c.id));
+
+  // safe default: add from your existing directory in order
+  for (const c of COMPANY_DIRECTORY) {
+    if (companies.length >= MAX_COMPANIES) break;
+    if (existing.has(c.id)) continue;
+    companies.push(c);
+    existing.add(c.id);
+  }
+
+  const added = companies.length - before;
+  renderSelectedCompanies();
+
+  if (added > 0) showToast(`Added ${added} companies`);
+  else showToast("No companies to add");
+
+  companySearch?.focus();
 }
 
 

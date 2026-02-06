@@ -1,17 +1,43 @@
-/* Base */
+/* Base + typography (SF Pro–like via system font stack) */
+:root{
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+               "Helvetica Neue", Arial, sans-serif;
+  --text: #111827;
+  --muted: #6b7280;
+  --muted2: #4b5563;
+  --border: rgba(17, 24, 39, 0.12);
+  --border2: rgba(17, 24, 39, 0.18);
+  --bg: #ffffff;
+}
+
 html, body {
   width: 100%;
   height: 100%;
   margin: 0;
+  overflow: hidden;               /* prevents the outer (iframe) scrollbar */
   background: #fff;
-  color: #111;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #111827;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+               "Helvetica Neue", Arial, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
 body {
   box-sizing: border-box;
+  height: 100%;
   padding: 14px;
+  display: flex;                  /* topbar fixed + one scrolling region */
+  flex-direction: column;
+  overflow: hidden;               /* key: no body scrollbar */
 }
+
+
+button, input, textarea{
+  font: inherit;              /* ensures buttons/inputs match the same typography */
+  letter-spacing: inherit;
+}
+
 
 /* Topbar */
 .topbar {
@@ -22,10 +48,27 @@ body {
 }
 
 .brand {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
+
+.brand-title {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: #111827;
+}
+
+.brand-logo {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  display: block;
+}
+
+
 
 .topbar-actions {
   display: flex;
@@ -36,7 +79,7 @@ body {
   width: 32px;
   height: 32px;
   border-radius: 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border);
   background: white;
   cursor: pointer;
   font-size: 16px;
@@ -46,10 +89,11 @@ body {
 /* Views */
 .view { width: 100%; }
 
-.h1 { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
-.h2 { font-size: 14px; font-weight: 700; }
-.sub { font-size: 13px; color: #4b5563; margin-bottom: 12px; }
-.hint { font-size: 12px; color: #6b7280; margin-top: 10px; }
+.h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 6px; }
+.h2 { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
+.sub { font-size: 13px; color: #6b7280; margin-bottom: 12px; }
+.profile, .meta, .hint { color: #6b7280; }
+
 
 /* Form */
 .section { margin: 14px 0; }
@@ -63,7 +107,7 @@ body {
   padding: 9px 10px;
   font-size: 13px;
   border-radius: 10px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border2);
   outline: none;
   box-sizing: border-box;
 }
@@ -72,7 +116,7 @@ body {
   padding: 9px 10px;
   font-size: 13px;
   border-radius: 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border);
   background: white;
   cursor: pointer;
 }
@@ -86,6 +130,55 @@ body {
   color: white;
   font-weight: 600;
 }
+.callout{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+
+  padding:12px 12px;
+  border-radius:12px;
+
+  background:#E9F2FF;
+  border:1px solid #D5E6FF;
+
+  margin: 6px 0 14px;
+}
+
+.calloutText{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  min-width:0;
+}
+
+.calloutTitle{
+  color:#0A66C2;
+  font-weight:700;
+  font-size:13px;
+  letter-spacing:-0.1px;
+}
+
+.calloutBody{
+  color:#0b1f3a;
+  font-size:12px;
+  line-height:1.35;
+}
+
+.calloutBtn{
+  background:#0A66C2;
+  color:#fff;
+  border:none;
+  border-radius:10px;
+  padding:10px 12px;
+  font-weight:700;
+  white-space:nowrap;
+}
+
+.calloutBtn .arrow{
+  margin-left:4px;
+}
+
 
 /* Chips (roles) */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -274,12 +367,14 @@ body {
   z-index: 999999;
 }
 
-/* Let setup/app content scroll inside the iframe */
 .view {
-  height: calc(100% - 52px); /* topbar + spacing */
-  overflow-y: auto;
+  width: 100%;
+  flex: 1 1 auto;                 /* take remaining height under topbar */
+  min-height: 0;                  /* required for flex children to scroll */
+  overflow-y: auto;               /* the ONLY scrollbar */
   padding-bottom: 12px;
 }
+
 
 /* Company/role suggestion lists should scroll */
 .suggestions {
