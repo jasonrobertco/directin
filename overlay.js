@@ -53,6 +53,7 @@ const addCompanyBtn = document.getElementById("addCompanyBtn");
 const companySuggestions = document.getElementById("companySuggestions");
 const selectedCompanies = document.getElementById("selectedCompanies");
 const finishSetupBtn = document.getElementById("finishSetupBtn");
+const goBigTechBtn = document.getElementById("goBigTechBtn");
 
 // ===============================
 // DOM refs (app)
@@ -84,10 +85,18 @@ const toast = document.getElementById("toast");
 // ===============================
 // Constants
 // ===============================
+// Storage keys
+const STORAGE_PROFILE_KEY = "userProfile";
+const STORAGE_CACHE_KEY = "companyCache";
+const STORAGE_TRACKED_KEY = "trackedJobs";
+
 const MAX_QUERIES = 3;
 const MAX_COMPANIES = 10;
 const MAX_TRACKED = 5;
 const NEW_DAYS = 7;
+
+// FOR TESTING: Set to true to always show setup screen on refresh
+const FORCE_SETUP = false;
 
 // Matching
 const MATCH_THRESHOLD = 0.75; // 75% token coverage counts as a match
@@ -122,8 +131,9 @@ const COMPANY_DIRECTORY = [
 // ===============================
 // App state (single source of truth)
 // ===============================
-let userProfile = null;              // { roleQueries: [], createdAt }
+let userProfile = null;              // { roleQueries: [], companies: [], createdAt }
 let companies = [];                  // [{ id, name, boardSlug, domain }]
+let roleQueries = [];                // ["software engineer intern", ...] from userProfile
 let trackedJobs = [];                // [{ jobId, companyId, status, ... }]
 let companyCache = {};               // companyId -> { fetchedAt, error, jobs, companyName }
 
@@ -449,31 +459,57 @@ function wireEventsOnce() {
 // Boot
 // ===============================
 (async function init() {
-  wireEventsOnce();
+  console.log("[DirectIn] overlay init start");
 
-  const data = await storageGet(["userProfile", "trackedCompanies", "trackedJobs", "companyCache"]);
-  userProfile = migrateProfile(data.userProfile || null);
-  companies = data.trackedCompanies || [];
-  trackedJobs = data.trackedJobs || [];
-  companyCache = data.companyCache || {};
+  try {
+    wireEventsOnce();
 
-  updateTrackedTabLabel();
+    const data = await storageGet([STORAGE_PROFILE_KEY, STORAGE_CACHE_KEY, STORAGE_TRACKED_KEY]);
 
-  const hasQueries = Array.isArray(userProfile?.roleQueries) && userProfile.roleQueries.length > 0;
-  if (!userProfile || !hasQueries || companies.length === 0) {
-    enterSetup(false);
-    return;
+    userProfile = data[STORAGE_PROFILE_KEY] || null;
+    companyCache = data[STORAGE_CACHE_KEY] || {};
+    trackedJobs = data[STORAGE_TRACKED_KEY] || [];
+
+    // Migrate old profile format if needed
+    userProfile = migrateProfile(userProfile);
+
+    companies = Array.isArray(userProfile?.companies) ? userProfile.companies : [];
+    roleQueries = Array.isArray(userProfile?.roleQueries) ? userProfile.roleQueries : [];
+
+    renderSelectedCompanies();
+    renderSelectedQueries();
+    updateTrackedTabLabel();
+
+    // FOR TESTING: Force setup screen to appear
+    if (FORCE_SETUP) {
+      enterSetup(false);
+      return;
+    }
+
+    // Decide view
+    if (!companies.length || !roleQueries.length) {
+      enterSetup(false);
+    } else {
+      enterApp();
+      await refreshAllCompanies();
+      renderCompanies();
+    }
+
+    console.log("[DirectIn] overlay init done");
+  } catch (err) {
+    console.error("[DirectIn] overlay init failed", err);
+
+    // Never leave it blank
+    if (typeof enterSetup === "function") enterSetup(false);
+    else {
+      if (setupView) setupView.style.display = "block";
+      if (appView) appView.style.display = "none";
+    }
+
+    showToast("DirectIn failed to load. Open console for error.");
   }
-
-  // Persist migration if needed
-  if (userProfile && !data.userProfile?.roleQueries) {
-    await storageSet({ userProfile });
-  }
-
-  enterApp();
-  await refreshAllCompanies();
-  renderCompanies();
 })();
+
 
 // ===============================
 // Setup screen
@@ -540,8 +576,8 @@ function renderSelectedQueries() {
     const row = document.createElement("div");
     row.className = "selected-item";
     row.innerHTML = `
-      <div><b>${q}</b></div>
-      <button class="btn small">Remove</button>
+      <div class="name">${q}</div>
+      <button>Remove</button>
     `;
 
     row.querySelector("button").onclick = () => removeQuery(q);
@@ -811,10 +847,10 @@ function renderSelectedCompanies() {
     row.className = "selected-item";
     row.innerHTML = `
       <div>
-        <div><b>${c.name}</b></div>
-        <div class="smallmuted">${c.boardSlug}</div>
+        <div class="name">${c.name}</div>
+        <div class="slug">${c.boardSlug}</div>
       </div>
-      <button class="btn small">Remove</button>
+      <button>Remove</button>
     `;
     row.querySelector("button").onclick = () => removeCompany(c.id);
     selectedCompanies.appendChild(row);
