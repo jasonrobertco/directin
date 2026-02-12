@@ -9,8 +9,7 @@
 // - Company detail shows matched roles sorted by recency and indicates best-matching query.
 //
 // Storage (chrome.storage.local):
-// - userProfile: { roleQueries: ["software engineer intern", ...], createdAt }
-// - trackedCompanies: [{id,name,boardSlug,domain}]
+// - userProfile: { roleQueries: ["software engineer intern", ...], companies: [{...}], createdAt }
 // - trackedJobs: [{jobId, companyId, ... status ... }]
 // - companyCache: { [companyId]: { fetchedAt, error, jobs, companyName } }
 // -----------------------------------------------------------------------------
@@ -128,6 +127,41 @@ const COMPANY_DIRECTORY = [
   { id: "coinbase", name: "Coinbase", boardSlug: "coinbase", domain: "coinbase.com" },
 ];
 
+// Persisted suggestion directory (grows as users add verified boards)
+const STORAGE_DIRECTORY_KEY = "directin_company_directory";
+let extraDirectory = [];           // loaded from storage
+let companyDirectory = [...COMPANY_DIRECTORY];
+
+function dedupeDirectory(list) {
+  const map = new Map();
+  (list || []).forEach((c) => {
+    const id = String(c?.id || "").trim();
+    if (!id) return;
+    map.set(id, {
+      id,
+      name: String(c?.name || "").trim() || id,
+      boardSlug: String(c?.boardSlug || id).trim(),
+      domain: String(c?.domain || "").trim(),
+    });
+  });
+  return Array.from(map.values());
+}
+
+function rebuildCompanyDirectory() {
+  companyDirectory = dedupeDirectory([...(COMPANY_DIRECTORY || []), ...(extraDirectory || [])]);
+}
+
+async function rememberCompanyForSuggestions(c) {
+  if (!c?.id) return;
+
+  // Don't duplicate built-in entries
+  if (COMPANY_DIRECTORY.some((x) => x.id === c.id)) return;
+
+  extraDirectory = dedupeDirectory([...(extraDirectory || []).filter((x) => x.id !== c.id), c]).slice(-150);
+  rebuildCompanyDirectory();
+  await storageSet({ [STORAGE_DIRECTORY_KEY]: extraDirectory });
+}
+
 // ===============================
 // App state (single source of truth)
 // ===============================
@@ -199,7 +233,7 @@ function attachLogoFallback(cardEl, companyName) {
 }
 
 
-// Parse either a slug (“stripe”) OR a Greenhouse URL.
+// Parse either a slug ("stripe") OR a Greenhouse URL.
 function slugFromGreenhouseInput(text) {
   const t = String(text || "").trim();
   if (!t) return null;
@@ -245,17 +279,19 @@ function migrateProfile(p) {
     if (roles.includes("intern")) q.push("Software Engineer Intern");
     if (roles.includes("swe")) q.push("Software Engineer");
     if (roles.includes("ml")) q.push("Machine Learning Intern");
-    if (roles.includes("data")) q.push("Data Engineer Intern");
-    if (roles.includes("hardware")) q.push("Embedded Intern");
 
-    return { roleQueries: q.slice(0, MAX_QUERIES), createdAt: p.createdAt || Date.now() };
+    return {
+      roleQueries: q.length > 0 ? q : ["Software Engineer"],
+      companies: p.companies || [],
+      createdAt: p.createdAt || Date.now(),
+    };
   }
 
-  return p;
+  return null;
 }
 
 // ===============================
-// Matching (token scoring + synonyms)
+// Matching logic
 // ===============================
 const SENIORITY_BLOCKLIST = ["senior", "staff", "principal", "lead", "manager", "director", "head"];
 
@@ -266,8 +302,6 @@ const TOKEN_ALIASES = {
   internship: ["internship", "intern"],
   grad: ["grad", "graduate"],
   graduate: ["graduate", "grad"],
-  swe: ["swe"], // handled via query expansion (below)
-  ml: ["ml"],   // handled via query expansion (below)
 };
 
 function normalize(s) {
@@ -278,29 +312,20 @@ function normalize(s) {
     .trim();
 }
 
+function expandAbbrev(normStr) {
+  return String(normStr || "")
+    .replace(/\bswe\b/g, "software engineer")
+    .replace(/\bsde\b/g, "software engineer")
+    .replace(/\bml\b/g, "machine learning");
+}
+
 function expandQuery(q) {
-  // Expand common abbreviations before tokenizing
-  let s = normalize(q);
-
-  // SWE / SDE -> software engineer
-  s = s.replace(/\bswe\b/g, "software engineer");
-  s = s.replace(/\bsde\b/g, "software engineer");
-
-  // ML -> machine learning
-  s = s.replace(/\bml\b/g, "machine learning");
-
-  // New grad variants (keep both terms so token aliases can hit)
-  s = s.replace(/\bnew grad\b/g, "new grad");
-  s = s.replace(/\buniversity grad\b/g, "university grad");
-  s = s.replace(/\bearly career\b/g, "early career");
-
-  return s;
+  return expandAbbrev(normalize(q));
 }
 
 function tokenize(s) {
-  const n = normalize(s);
-  if (!n) return [];
-  return n.split(" ").filter(Boolean);
+  const n = expandAbbrev(normalize(s));
+  return n ? n.split(" ").filter(Boolean) : [];
 }
 
 function hasSeniority(titleNorm) {
@@ -308,38 +333,30 @@ function hasSeniority(titleNorm) {
 }
 
 function titleTokenSet(title) {
-  const t = normalize(title);
+  const t = expandAbbrev(normalize(title));
   return new Set(t ? t.split(" ") : []);
 }
 
 function tokenMatchesTitle(token, tset) {
-  if (!tset || typeof tset.has !== 'function') return false;
   const aliases = TOKEN_ALIASES[token] || [token];
   return aliases.some((a) => {
     const an = normalize(a);
     if (!an) return false;
-    // alias might be multiword after normalize; all words must appear
     const parts = an.split(" ").filter(Boolean);
     return parts.every((p) => tset.has(p));
   });
 }
 
 function scoreTitleAgainstQuery(title, query) {
-  if (!title || !query) return { score: 0, matched: 0, total: 0, query: query || "" };
-  
-  const titleNorm = normalize(title);
+  const titleNorm = expandAbbrev(normalize(title));
+  if (hasSeniority(titleNorm)) return 0;
+
   const tset = titleTokenSet(title);
+  const qTokens = tokenize(expandQuery(query)).filter(
+    (w) => !["and", "of", "the", "a", "an", "to", "for"].includes(w)
+  );
 
-  const qExpanded = expandQuery(query);
-  const qTokensRaw = tokenize(qExpanded);
-
-  // Remove ultra-common noise tokens (optional)
-  const qTokens = qTokensRaw.filter((w) => !["and", "of", "the", "a", "an", "to", "for"].includes(w));
-
-  if (qTokens.length === 0) return { score: 0, matched: 0, total: 0, query: query };
-
-  // Student-targeted: block senior/management titles always
-  if (hasSeniority(titleNorm)) return { score: 0, matched: 0, total: qTokens.length, query: query };
+  if (qTokens.length === 0) return 0;
 
   let matched = 0;
   for (const tok of qTokens) {
@@ -348,115 +365,107 @@ function scoreTitleAgainstQuery(title, query) {
 
   let score = matched / qTokens.length;
 
-  // Small bonus if the whole normalized query appears as a substring
-  const qNorm = normalize(qExpanded);
+  const qNorm = expandAbbrev(normalize(query));
   if (qNorm && titleNorm.includes(qNorm)) score = Math.min(1, score + 0.1);
 
-  return { score, matched, total: qTokens.length, query: query };
+  return score;
 }
 
 function bestMatchForJobTitle(title, roleQueries) {
   const queries = Array.isArray(roleQueries) ? roleQueries : [];
-  if (queries.length === 0) return { score: 1, query: "" };
+  if (!queries.length) return { score: 0, query: null };
 
-  let best = { score: 0, query: "" };
+  let best = { score: 0, query: null };
   for (const q of queries) {
     const s = scoreTitleAgainstQuery(title, q);
-    if (s.score > best.score) best = { score: s.score, query: s.query };
+    if (s > best.score) best = { score: s, query: q };
   }
   return best;
 }
 
 function getRelevantMatches(jobs, roleQueries) {
-  const out = [];
-  for (const j of (jobs || [])) {
-    const title = String(j.title || "");
-    const best = bestMatchForJobTitle(title, roleQueries);
-    if (best.score >= MATCH_THRESHOLD) out.push({ job: j, match: best });
-  }
-  // newest first
-  out.sort((a, b) => new Date(b.job.createdAt) - new Date(a.job.createdAt));
-  return out;
+  return jobs
+    .map((job) => {
+      const match = bestMatchForJobTitle(job.title, roleQueries);
+      return { job, match };
+    })
+    .filter((x) => x.match.score >= MATCH_THRESHOLD)
+    .sort((a, b) => {
+      const dateA = a.job.createdAt ? new Date(a.job.createdAt).getTime() : 0;
+      const dateB = b.job.createdAt ? new Date(b.job.createdAt).getTime() : 0;
+      return dateB - dateA;
+    });
 }
 
 // ===============================
-// One-time event wiring
+// Wire up static events (run once)
 // ===============================
-let _eventsWired = false;
-
 function wireEventsOnce() {
-  if (_eventsWired) return;
-  _eventsWired = true;
-  if (goBigTechBtn) {
-  goBigTechBtn.onclick = () => quickAddBigTech();
-}
+  // Window messaging
+  minimizeBtn?.addEventListener("click", () => {
+    window.parent?.postMessage({ type: "GOL_MINIMIZE" }, "*");
+  });
 
-  // Topbar actions
-  if (minimizeBtn) minimizeBtn.onclick = () => window.parent.postMessage({ type: "GOL_MINIMIZE" }, "*");
-  if (expandBtn) expandBtn.onclick = () => window.parent.postMessage({ type: "GOL_TOGGLE_EXPAND" }, "*");
-  if (settingsBtn) settingsBtn.onclick = () => enterSetup(true);
+  expandBtn?.addEventListener("click", () => {
+    window.parent?.postMessage({ type: "GOL_TOGGLE_EXPAND" }, "*");
+  });
 
-  // Setup: company search behaviors
-  if (companySearch) {
-    companySearch.oninput = () => renderCompanySuggestions(companySearch.value);
-    companySearch.onfocus = () => renderCompanySuggestions(companySearch.value);
-    companySearch.onkeydown = (e) => {
-      if (e.key === "Enter") addCompanyFromInput(companySearch.value);
-    };
-  }
-  if (addCompanyBtn) addCompanyBtn.onclick = () => addCompanyFromInput(companySearch.value);
-
-  // Setup: alert keyword behaviors
-  if (roleSearch) {
-    roleSearch.oninput = () => renderRoleSuggestions(roleSearch.value);
-    roleSearch.onfocus = () => renderRoleSuggestions(roleSearch.value);
-    roleSearch.onkeydown = (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        addQueryFromInput(roleSearch.value);
-      }
-    };
-  }
-
-  // Setup: finish
-  if (finishSetupBtn) finishSetupBtn.onclick = onFinishSetup;
+  settingsBtn?.addEventListener("click", () => {
+    enterSetup(true);
+    renderSelectedQueries();
+    renderSelectedCompanies();
+  });
 
   // Tabs
-  if (tabCompanies) tabCompanies.onclick = () => showCompaniesScreen();
-  if (tabTracked) tabTracked.onclick = () => showTrackedScreen();
+  tabCompanies?.addEventListener("click", () => showCompaniesScreen());
+  tabTracked?.addEventListener("click", () => showTrackedScreen());
 
-  // Refresh buttons
-  if (refreshBtn) refreshBtn.onclick = async () => {
-    showToast("Refreshing…");
-    await refreshAllCompanies();
-    renderCompanies();
-  };
+  // Main screens
+  backBtn?.addEventListener("click", () => showCompaniesScreen());
+  refreshBtn?.addEventListener("click", () => {
+    refreshAllCompanies().then(() => renderCompanies());
+  });
 
-  if (refreshTrackedBtn) refreshTrackedBtn.onclick = async () => {
-    showToast("Rechecking…");
+  refreshTrackedBtn?.addEventListener("click", async () => {
     await refreshAllCompanies();
     renderTracked();
-  };
+    showToast("Rechecked");
+  });
 
-  // Back from company jobs
-  if (backBtn) backBtn.onclick = () => showCompaniesScreen();
+  // Setup events
+  finishSetupBtn?.addEventListener("click", () => onFinishSetup());
 
-  // Click-outside to close dropdowns
-  document.addEventListener("click", (e) => {
-    if (companySuggestions && companySearch) {
-      const clickInCompany = companySuggestions.contains(e.target) || e.target === companySearch;
-      if (!clickInCompany) companySuggestions.style.display = "none";
-    }
+  roleSearch?.addEventListener("input", (e) => {
+    const val = e.target?.value || "";
+    if (val.length >= 2) renderRoleSuggestions(val);
+    else if (roleSuggestions) roleSuggestions.style.display = "none";
+  });
 
-    if (roleSuggestions && roleSearch) {
-      const clickInRole = roleSuggestions.contains(e.target) || e.target === roleSearch;
-      if (!clickInRole) roleSuggestions.style.display = "none";
-    }
+  roleSearch?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    addQueryFromInput(e.target?.value || "");
+  });
+
+  companySearch?.addEventListener("input", (e) => {
+    const val = e.target?.value || "";
+    if (val.length >= 1) renderCompanySuggestions(val);
+    else if (companySuggestions) companySuggestions.style.display = "none";
+  });
+
+  addCompanyBtn?.addEventListener("click", () => {
+    addCompanyFromInput(companySearch?.value || "");
+  });
+
+  companySearch?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    addCompanyFromInput(e.target?.value || "");
   });
 }
 
 // ===============================
-// Boot
+// Init (boot)
 // ===============================
 (async function init() {
   console.log("[DirectIn] overlay init start");
@@ -464,11 +473,15 @@ function wireEventsOnce() {
   try {
     wireEventsOnce();
 
-    const data = await storageGet([STORAGE_PROFILE_KEY, STORAGE_CACHE_KEY, STORAGE_TRACKED_KEY]);
+    const data = await storageGet([STORAGE_PROFILE_KEY, STORAGE_CACHE_KEY, STORAGE_TRACKED_KEY, STORAGE_DIRECTORY_KEY]);
 
     userProfile = data[STORAGE_PROFILE_KEY] || null;
     companyCache = data[STORAGE_CACHE_KEY] || {};
     trackedJobs = data[STORAGE_TRACKED_KEY] || [];
+
+    // Load extra company suggestions (persisted)
+    extraDirectory = Array.isArray(data[STORAGE_DIRECTORY_KEY]) ? data[STORAGE_DIRECTORY_KEY] : [];
+    rebuildCompanyDirectory();
 
     // Migrate old profile format if needed
     userProfile = migrateProfile(userProfile);
@@ -519,44 +532,39 @@ function enterSetup(prefillFromExisting) {
   if (setupView) setupView.style.display = "block";
   if (appView) appView.style.display = "none";
 
-  setupSelectedQueries =
-    prefillFromExisting && userProfile && Array.isArray(userProfile.roleQueries)
-      ? [...userProfile.roleQueries]
-      : [];
+  if (!prefillFromExisting) {
+    setupSelectedQueries = [];
+    companies = [];
+  } else {
+    setupSelectedQueries = [...roleQueries];
+    companies = Array.isArray(userProfile?.companies) ? [...userProfile.companies] : [];
+  }
 
   renderSelectedQueries();
   renderSelectedCompanies();
 
   if (roleSearch) roleSearch.value = "";
-  if (roleSuggestions) {
-    roleSuggestions.style.display = "none";
-    roleSuggestions.innerHTML = "";
-  }
-
   if (companySearch) companySearch.value = "";
-  if (companySuggestions) {
-    companySuggestions.style.display = "none";
-    companySuggestions.innerHTML = "";
-  }
+  if (roleSuggestions) roleSuggestions.style.display = "none";
+  if (companySuggestions) companySuggestions.style.display = "none";
 }
 
+// ---- Queries: add / remove / render ----
 function addQueryFromInput(input) {
-  const raw = String(input || "").trim();
-  if (!raw) return;
+  const val = String(input || "").trim();
+  if (!val) return;
+
+  if (setupSelectedQueries.includes(val)) {
+    showToast("Already added");
+    return;
+  }
 
   if (setupSelectedQueries.length >= MAX_QUERIES) {
     showToast(`Max ${MAX_QUERIES} alert keywords`);
     return;
   }
 
-  // Dedup by normalized form
-  const n = normalize(raw);
-  if (setupSelectedQueries.some((q) => normalize(q) === n)) {
-    showToast("Already added");
-    return;
-  }
-
-  setupSelectedQueries.push(raw);
+  setupSelectedQueries.push(val);
   renderSelectedQueries();
 
   if (roleSearch) roleSearch.value = "";
@@ -573,15 +581,16 @@ function renderSelectedQueries() {
   selectedRolesDiv.innerHTML = "";
 
   setupSelectedQueries.forEach((q) => {
-    const row = document.createElement("div");
-    row.className = "selected-item";
-    row.innerHTML = `
-      <div class="name">${q}</div>
+    const item = document.createElement("div");
+    item.className = "selected-item";
+    item.innerHTML = `
+      <div>
+        <div class="name">${q}</div>
+      </div>
       <button>Remove</button>
     `;
-
-    row.querySelector("button").onclick = () => removeQuery(q);
-    selectedRolesDiv.appendChild(row);
+    item.querySelector("button")?.addEventListener("click", () => removeQuery(q));
+    selectedRolesDiv.appendChild(item);
   });
 }
 
@@ -589,32 +598,32 @@ function renderRoleSuggestions(query) {
   if (!roleSuggestions) return;
 
   const q = String(query || "").trim().toLowerCase();
-  roleSuggestions.innerHTML = "";
-
   if (!q) {
     roleSuggestions.style.display = "none";
     return;
   }
 
-  const matches = ROLE_TEMPLATES
-    .filter((t) => t.toLowerCase().includes(q))
-    .slice(0, 8);
+  const matches = ROLE_TEMPLATES.filter((t) => {
+    const tl = t.toLowerCase();
+    const ql = q.toLowerCase();
+    return tl.includes(ql) || ql.includes(tl);
+  });
 
-  // Template matches
-  for (const t of matches) {
+  if (!matches.length) {
+    roleSuggestions.style.display = "none";
+    return;
+  }
+
+  roleSuggestions.innerHTML = "";
+  matches.forEach((t) => {
     const row = document.createElement("div");
     row.className = "suggestion";
     row.textContent = t;
-    row.onclick = () => addQueryFromInput(t);
+    row.onclick = () => {
+      addQueryFromInput(t);
+    };
     roleSuggestions.appendChild(row);
-  }
-
-  // Allow adding the raw query
-  const addRow = document.createElement("div");
-  addRow.className = "suggestion";
-  addRow.innerHTML = `<div>Add "${String(query).trim()}"</div><div class="smallmuted">Track future posts matching these keywords</div>`;
-  addRow.onclick = () => addQueryFromInput(query);
-  roleSuggestions.appendChild(addRow);
+  });
 
   roleSuggestions.style.display = "block";
 }
@@ -638,15 +647,19 @@ async function onFinishSetup() {
     return;
   }
 
+  // FIX: Save companies INSIDE userProfile object
   userProfile = {
     roleQueries: [...setupSelectedQueries],
-    createdAt: Date.now(),
+    companies: [...companies],  // ← Companies now saved inside userProfile
+    createdAt: userProfile?.createdAt || Date.now(),
   };
 
   await storageSet({
-    userProfile,
-    trackedCompanies: companies,
+    [STORAGE_PROFILE_KEY]: userProfile,
   });
+
+  // Also update the in-memory references
+  roleQueries = [...setupSelectedQueries];
 
   enterApp();
   await refreshAllCompanies();
@@ -656,7 +669,7 @@ async function onFinishSetup() {
   if (summary.total > 0) {
     showToast(`Found ${summary.total} matches · newest ${formatDate(summary.newest)}`);
   } else {
-    showToast("No matches right now (we’ll catch future posts)");
+    showToast("No matches right now (we'll catch future posts)");
   }
 
   renderCompanies();
@@ -669,191 +682,192 @@ function renderCompanySuggestions(query) {
   const q = String(query || "").trim().toLowerCase();
   if (!q) {
     companySuggestions.style.display = "none";
-    companySuggestions.innerHTML = "";
     return;
   }
 
-  const matches = COMPANY_DIRECTORY
-    .filter((c) => c.name.toLowerCase().includes(q) || c.boardSlug.includes(q))
-    .slice(0, 10);
+  const inDirectory = companyDirectory.filter(
+    (c) => c.name.toLowerCase().includes(q) || c.boardSlug.toLowerCase().includes(q)
+  );
+
+  const alreadyAdded = new Set(companies.map((c) => c.id));
+  const filtered = inDirectory.filter((c) => !alreadyAdded.has(c.id));
+
+  const slug = slugFromGreenhouseInput(q);
+  const isValidSlug = slug && !/\s/.test(slug) && slug.length >= 2;
+
+  if (!filtered.length && !isValidSlug) {
+    companySuggestions.style.display = "none";
+    return;
+  }
 
   companySuggestions.innerHTML = "";
 
-  if (matches.length > 0) {
-    matches.forEach((c) => {
-      const row = document.createElement("div");
-      row.className = "suggestion";
-      row.innerHTML = `<div>${c.name}</div><div class="smallmuted">${c.boardSlug}</div>`;
-      row.onclick = async () => {
-        await addCompany(c);
-        companySuggestions.style.display = "none";
-        if (companySearch) companySearch.value = "";
-      };
-      companySuggestions.appendChild(row);
-    });
+  filtered.forEach((c) => {
+    const row = document.createElement("div");
+    row.className = "suggestion";
+    row.innerHTML = `<span>${c.name}</span><span class="smallmuted">${c.boardSlug}</span>`;
+    row.onclick = () => addCompany(c);
+    companySuggestions.appendChild(row);
+  });
 
-    companySuggestions.style.display = "block";
-    return;
+  if (isValidSlug && !alreadyAdded.has(slug)) {
+    const row = document.createElement("div");
+    row.className = "suggestion";
+    row.innerHTML = `<span>Custom: ${titleizeSlug(slug)}</span><span class="smallmuted">${slug}</span>`;
+    row.onclick = () => {
+      const c = { id: slug, name: titleizeSlug(slug), boardSlug: slug, domain: "" };
+      addCompany(c);
+    };
+    companySuggestions.appendChild(row);
   }
 
-  const slug = slugFromGreenhouseInput(query);
-  const row = document.createElement("div");
-  row.className = "suggestion";
-
-  if (slug) {
-    row.innerHTML = `<div>Add "${slug}"</div><div class="smallmuted">Validate Greenhouse board</div>`;
-    row.onclick = () => addCompanyFromInput(query);
-  } else {
-    row.innerHTML = `<div>Paste a Greenhouse board URL</div><div class="smallmuted">or type a board slug (e.g., stripe)</div>`;
-    row.onclick = () => showToast("Paste a Greenhouse URL or slug");
-  }
-
-  companySuggestions.appendChild(row);
   companySuggestions.style.display = "block";
 }
 
 async function addCompanyFromInput(input) {
+  const val = String(input || "").trim();
+  if (!val) return;
+
+  const existing = companyDirectory.find(
+    (c) => c.name.toLowerCase() === val.toLowerCase() || c.boardSlug.toLowerCase() === val.toLowerCase()
+  );
+
+  if (existing) {
+    await addCompany(existing);
+    return;
+  }
+
+  const slug = slugFromGreenhouseInput(val);
+  if (!slug) {
+    showToast("Enter a valid Greenhouse board slug or URL");
+    return;
+  }
+
+  if (companies.some((c) => c.id === slug)) {
+    showToast("Already added");
+    return;
+  }
+
   if (companies.length >= MAX_COMPANIES) {
     showToast(`Max ${MAX_COMPANIES} companies`);
     return;
   }
 
-  const slug = slugFromGreenhouseInput(input);
-  if (!slug) {
-    showToast("Paste a Greenhouse board URL or type a slug");
-    return;
+  showToast("Verifying board...");
+
+  try {
+    const res = await sendMessage({
+      type: "FETCH_COMPANY_JOBS",
+      boardSlug: slug,
+      companyName: titleizeSlug(slug),
+    });
+
+    if (res?.error) throw new Error(res.error);
+
+    const c = {
+      id: slug,
+      name: res.company?.name || titleizeSlug(slug),
+      boardSlug: slug,
+      domain: "",
+    };
+
+    await rememberCompanyForSuggestions(c);
+
+    await addCompany(c);
+
+    companyCache[c.id] = {
+      companyName: c.name,
+      jobs: res.jobs || [],
+      fetchedAt: Date.now(),
+      error: null,
+    };
+
+    await storageSet({ companyCache });
+  } catch (err) {
+    showToast(String(err));
   }
-
-  if (companies.some((x) => x.boardSlug === slug || x.id === slug)) {
-    showToast("Already added");
-    return;
-  }
-
-  const found = COMPANY_DIRECTORY.find((c) => c.boardSlug === slug);
-  if (found) {
-    await addCompany(found);
-    if (companySearch) companySearch.value = "";
-    if (companySuggestions) companySuggestions.style.display = "none";
-    return;
-  }
-
-  showToast("Validating…");
-
-  const res = await sendMessage({
-    type: "FETCH_COMPANY_JOBS",
-    boardSlug: slug,
-    companyName: titleizeSlug(slug),
-  });
-
-  if (!res || res.error) {
-    showToast("Invalid Greenhouse board slug/URL");
-    return;
-  }
-
-  const apiName = res.company?.name || titleizeSlug(slug);
-
-  await addCompany({
-    id: slug,
-    name: apiName,
-    boardSlug: slug,
-    domain: "",
-  });
-
-  companyCache[slug] = {
-    fetchedAt: Date.now(),
-    error: null,
-    jobs: res.jobs || [],
-    companyName: apiName,
-  };
-
-  await storageSet({ companyCache });
 
   if (companySearch) companySearch.value = "";
   if (companySuggestions) companySuggestions.style.display = "none";
 }
 
 async function addCompany(c) {
-  if (companies.length >= MAX_COMPANIES) {
-    showToast(`Max ${MAX_COMPANIES} companies`);
-    return;
-  }
-
   if (companies.some((x) => x.id === c.id)) {
     showToast("Already added");
     return;
   }
 
-  companies.push({
-    id: c.id,
-    name: c.name,
-    boardSlug: c.boardSlug,
-    domain: c.domain || "",
-  });
+  if (companies.length >= MAX_COMPANIES) {
+    showToast(`Max ${MAX_COMPANIES} companies`);
+    return;
+  }
 
+  companies.push(c);
+  await persistCompanyEdits();
   renderSelectedCompanies();
+
+  if (companySearch) companySearch.value = "";
+  if (companySuggestions) companySuggestions.style.display = "none";
 }
 
 async function persistCompanyEdits() {
-  await storageSet({
-    trackedCompanies: companies,
-    trackedJobs,
-    companyCache,
-  });
+  // FIX: Update companies in userProfile before saving
+  if (userProfile) {
+    userProfile.companies = [...companies];
+  }
+  await storageSet({ [STORAGE_PROFILE_KEY]: userProfile });
 }
 
 async function removeCompany(companyId) {
   companies = companies.filter((c) => c.id !== companyId);
-
-  // keep cache + tracked consistent
-  delete companyCache[companyId];
-  trackedJobs = trackedJobs.filter((t) => t.companyId !== companyId);
-
+  await persistCompanyEdits();
   renderSelectedCompanies();
 
-  // If we're in settings mode (opened from ⚙), persist immediately so UI updates next open
-  if (settingsMode) {
-    await persistCompanyEdits();
-  }
+  trackedJobs = trackedJobs.filter((t) => t.companyId !== companyId);
+  await storageSet({ trackedJobs });
+
+  delete companyCache[companyId];
+  await storageSet({ companyCache });
+
+  updateTrackedTabLabel();
 }
 
 function quickAddBigTech() {
-  const before = companies.length;
-  const existing = new Set(companies.map(c => c.id));
+  const tech = companyDirectory.slice(0, 5);
+  const toAdd = tech.filter((c) => !companies.some((x) => x.id === c.id));
 
-  // safe default: add from your existing directory in order
-  for (const c of COMPANY_DIRECTORY) {
-    if (companies.length >= MAX_COMPANIES) break;
-    if (existing.has(c.id)) continue;
-    companies.push(c);
-    existing.add(c.id);
+  if (!toAdd.length) {
+    showToast("Big tech already added!");
+    return;
   }
 
-  const added = companies.length - before;
-  renderSelectedCompanies();
+  toAdd.forEach((c) => {
+    if (companies.length >= MAX_COMPANIES) return;
+    companies.push(c);
+  });
 
-  if (added > 0) showToast(`Added ${added} companies`);
-  else showToast("No companies to add");
-
-  companySearch?.focus();
+  persistCompanyEdits().then(() => {
+    renderSelectedCompanies();
+    showToast(`Added ${toAdd.length} companies`);
+  });
 }
-
 
 function renderSelectedCompanies() {
   if (!selectedCompanies) return;
   selectedCompanies.innerHTML = "";
 
   companies.forEach((c) => {
-    const row = document.createElement("div");
-    row.className = "selected-item";
-    row.innerHTML = `
+    const item = document.createElement("div");
+    item.className = "selected-item";
+    item.innerHTML = `
       <div>
         <div class="name">${c.name}</div>
         <div class="slug">${c.boardSlug}</div>
       </div>
       <button>Remove</button>
     `;
-    row.querySelector("button").onclick = () => removeCompany(c.id);
-    selectedCompanies.appendChild(row);
+    item.querySelector("button")?.addEventListener("click", () => removeCompany(c.id));
+    selectedCompanies.appendChild(item);
   });
 }
 
@@ -870,29 +884,29 @@ function enterApp() {
 
 function renderProfile() {
   if (!profileStatus) return;
-  const alerts = (userProfile?.roleQueries || []).join(" · ");
-  const comps = companies.map((c) => c.name).join(", ");
-  profileStatus.textContent = `Alerts: ${alerts} · Companies: ${comps}`;
+  const q = roleQueries.length;
+  const c = companies.length;
+  profileStatus.textContent = `Tracking ${c} ${c === 1 ? "company" : "companies"} · ${q} ${q === 1 ? "keyword" : "keywords"}`;
 }
 
 function showCompaniesScreen() {
-  if (tabCompanies) tabCompanies.classList.add("active");
-  if (tabTracked) tabTracked.classList.remove("active");
-
   if (companiesScreen) companiesScreen.style.display = "block";
   if (companyJobsScreen) companyJobsScreen.style.display = "none";
   if (trackedScreen) trackedScreen.style.display = "none";
+
+  if (tabCompanies) tabCompanies.classList.add("active");
+  if (tabTracked) tabTracked.classList.remove("active");
 
   renderCompanies();
 }
 
 function showTrackedScreen() {
-  if (tabTracked) tabTracked.classList.add("active");
-  if (tabCompanies) tabCompanies.classList.remove("active");
-
   if (companiesScreen) companiesScreen.style.display = "none";
   if (companyJobsScreen) companyJobsScreen.style.display = "none";
   if (trackedScreen) trackedScreen.style.display = "block";
+
+  if (tabCompanies) tabCompanies.classList.remove("active");
+  if (tabTracked) tabTracked.classList.add("active");
 
   renderTracked();
 }
@@ -906,8 +920,8 @@ function showCompanyJobs(companyId) {
   const company = companies.find((c) => c.id === companyId);
   if (!company) return;
 
-  if (tabCompanies) tabCompanies.classList.add("active");
-  if (tabTracked) tabTracked.classList.remove("active");
+  const cache = companyCache[companyId];
+  const jobs = cache?.jobs || [];
 
   if (companiesScreen) companiesScreen.style.display = "none";
   if (trackedScreen) trackedScreen.style.display = "none";
@@ -915,61 +929,52 @@ function showCompanyJobs(companyId) {
 
   if (companyJobsTitle) companyJobsTitle.textContent = company.name;
 
-  const cached = companyCache[companyId];
-  const jobs = cached?.jobs || [];
   renderCompanyJobs(company, jobs);
 }
 
-// ===============================
-// Data refresh + diff
-// ===============================
 async function refreshAllCompanies() {
   for (const c of companies) {
-    const res = await sendMessage({
-      type: "FETCH_COMPANY_JOBS",
-      boardSlug: c.boardSlug,
-      companyName: c.name,
-    });
-
-    if (!res || res.error) {
-      companyCache[c.id] = {
-        fetchedAt: Date.now(),
-        error: res?.error || "Fetch failed",
-        jobs: [],
+    try {
+      const res = await sendMessage({
+        type: "FETCH_COMPANY_JOBS",
+        boardSlug: c.boardSlug,
         companyName: c.name,
+      });
+
+      if (res?.error) {
+        companyCache[c.id] = {
+          companyName: c.name,
+          jobs: [],
+          fetchedAt: Date.now(),
+          error: String(res.error),
+        };
+      } else {
+        const jobs = res.jobs || [];
+        companyCache[c.id] = {
+          companyName: res.company?.name || c.name,
+          jobs,
+          fetchedAt: Date.now(),
+          error: null,
+        };
+
+        reconcileTrackedJobsForCompany(c.id, jobs);
+      }
+    } catch (err) {
+      companyCache[c.id] = {
+        companyName: c.name,
+        jobs: [],
+        fetchedAt: Date.now(),
+        error: String(err),
       };
-      continue;
     }
-
-    const apiName = res.company?.name;
-    if (apiName && apiName !== c.name) c.name = apiName;
-
-    const jobs = res.jobs || [];
-    companyCache[c.id] = {
-      fetchedAt: Date.now(),
-      error: null,
-      jobs,
-      companyName: c.name,
-    };
-
-    reconcileTrackedJobsForCompany(c.id, jobs);
   }
 
-  await storageSet({
-    trackedCompanies: companies,
-    trackedJobs,
-    companyCache,
-  });
-
-  updateTrackedTabLabel();
-  renderProfile();
+  await storageSet({ companyCache, trackedJobs });
 }
 
 function reconcileTrackedJobsForCompany(companyId, currentJobs) {
   const liveMap = new Map();
-  (currentJobs || []).forEach((j) => {
-    if (j.id != null) liveMap.set(String(j.id), j);
-  });
+  currentJobs.forEach((j) => liveMap.set(String(j.id), j));
 
   trackedJobs = trackedJobs.map((t) => {
     if (t.companyId !== companyId) return t;

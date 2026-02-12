@@ -2,13 +2,25 @@
 :root {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
                "Helvetica Neue", Arial, sans-serif;
-  --text: #1d1d1f;
-  --text-secondary: #86868b;
-  --border: rgba(0, 0, 0, 0.1);
-  --border-light: rgba(0, 0, 0, 0.06);
-  --bg: #ffffff;
+  /* Primary blue theme */
   --blue: #0A66C2;
   --blue-dark: #004182;
+  --blue-light: #E7F3FF;
+  --blue-hover: #084C9E;
+  
+  /* Text colors - using blue tints */
+  --text: #1A1A2E;
+  --text-secondary: #6B7280;
+  --text-blue: var(--blue);
+  
+  /* Borders - subtle blue tints */
+  --border: rgba(10, 102, 194, 0.15);
+  --border-light: rgba(10, 102, 194, 0.08);
+  
+  /* Backgrounds */
+  --bg: #ffffff;
+  --bg-hover: rgba(10, 102, 194, 0.04);
+  --bg-selected: var(--blue-light);
 }
 
 html, body {
@@ -88,7 +100,7 @@ button, input, textarea {
 }
 
 .iconbtn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--bg-hover);
 }
 
 /* Views */
@@ -204,7 +216,7 @@ button, input, textarea {
 }
 
 .btn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--bg-hover);
 }
 
 .btn.small {
@@ -272,7 +284,7 @@ button, input, textarea {
 }
 
 .selected-item button:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--bg-hover);
 }
 
 /* Suggestions dropdown */
@@ -304,7 +316,7 @@ button, input, textarea {
 }
 
 .suggestion:hover {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--bg-hover);
 }
 
 .smallmuted {
@@ -339,12 +351,12 @@ button, input, textarea {
 }
 
 .tab:hover {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--bg-hover);
 }
 
 .tab.active {
-  border-color: var(--text);
-  background: var(--text);
+  border-color: var(--blue);
+  background: var(--blue);
   color: #ffffff;
 }
 
@@ -366,7 +378,7 @@ button, input, textarea {
 }
 
 .card:hover {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--bg-hover);
   border-color: var(--border);
 }
 
@@ -513,12 +525,12 @@ button, input, textarea {
   top: 56px;
   padding: 12px 14px;
   border-radius: 12px;
-  background: var(--text);
+  background: var(--blue-dark);
   color: #ffffff;
   font-size: 15px;
   font-weight: 500;
   letter-spacing: -0.2px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 10px 40px rgba(10, 102, 194, 0.3);
   z-index: 999999;
 }
 
@@ -543,11 +555,11 @@ button, input, textarea {
 }
 
 .chip:hover {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--bg-hover);
 }
 
 .chip.selected {
-  border-color: var(--text);
-  background: var(--text);
+  border-color: var(--blue);
+  background: var(--blue);
   color: #ffffff;
 }
