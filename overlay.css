@@ -563,3 +563,121 @@ button, input, textarea {
   background: var(--blue);
   color: #ffffff;
 }
+
+/* =========================
+   DM company list (stable)
+   matches current overlay.js DOM:
+   .card.dm-card > .dm-row
+   ========================= */
+
+.card.dm-card {
+  padding: 14px;
+}
+
+.dm-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dm-left {
+  position: relative;
+  width: 60px;          /* reserves space for dot + logo */
+  height: 44px;
+  flex: 0 0 auto;
+  overflow: visible;
+  display: flex;
+  align-items: center;
+}
+
+/* Logo shifts right by default to make room for dot */
+.dm-avatar {
+  width: 44px;
+  height: 44px;
+  margin-left: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dm-avatar .logo,
+.dm-avatar .logo.fallback {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+}
+
+/* Blue dot: visible when present, not squished */
+.unread-dot {
+  position: absolute;
+  left: -3px;            /* move left/right here */
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #0A84FF;
+}
+.unread-dot.hidden { display: none; }
+
+.dm-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;   /* for top-right chevron */
+}
+
+.dm-top {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-right: 22px;  /* space so name doesn't run under chevron */
+}
+
+/* Company title should match old style */
+.dm-name {
+  font-size: 15px;      /* same as .company-name */
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Chevron back to top-right like before */
+.dm-chevron {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  font-size: 18px;
+  opacity: 0.45;
+  line-height: 1;
+}
+
+/* One-line subrow: [pill] [SWE Intern · date] */
+.dm-sub {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.dm-sub .pill {
+  flex: 0 0 auto;
+}
+
+/* Match the "No matches right now" typography, but a touch darker */
+.dm-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;      /* same as .meta */
+  font-weight: 500;
+  letter-spacing: -0.1px;
+  color: #4B5563;       /* darker than --text-secondary */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

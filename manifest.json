@@ -8,7 +8,9 @@
     "tabs"
   ],
   "host_permissions": [
-    "https://boards.greenhouse.io/*"
+    "https://boards.greenhouse.io/*",
+    "https://api.lever.co/*",
+    "https://jobs.lever.co/*"
   ],
   "action": {
     "default_title": "DirectIn",
@@ -27,7 +29,6 @@
   },
   "background": {
     "service_worker": "background.js"
-
   },
   "content_scripts": [
     {
@@ -45,6 +46,7 @@
         "overlay.html",
         "overlay.css",
         "overlay.js",
+        "company_directory.js",
         "directinlogo.png",
         "directinlogo.svg"
       ],

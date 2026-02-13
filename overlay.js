@@ -17,6 +17,27 @@
 // ===============================
 // Storage + messaging helpers
 // ===============================
+
+function formatMD(ms) {
+  if (!ms) return "—";
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${d.getMonth() + 1}/${d.getDate()}`; // no leading zeros
+}
+
+function resolveJobDates(job) {
+  const seenAt = job?.firstSeenAt ?? null;
+
+  const freshnessAt =
+    job?.providerUpdatedAt ??
+    job?.lastChangedAt ??
+    job?.lastFetchedAt ??
+    null;
+
+  return { seenAt, freshnessAt };
+}
+
+
 function storageGet(keys) {
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
 }
@@ -127,41 +148,6 @@ const COMPANY_DIRECTORY = [
   { id: "coinbase", name: "Coinbase", boardSlug: "coinbase", domain: "coinbase.com" },
 ];
 
-// Persisted suggestion directory (grows as users add verified boards)
-const STORAGE_DIRECTORY_KEY = "directin_company_directory";
-let extraDirectory = [];           // loaded from storage
-let companyDirectory = [...COMPANY_DIRECTORY];
-
-function dedupeDirectory(list) {
-  const map = new Map();
-  (list || []).forEach((c) => {
-    const id = String(c?.id || "").trim();
-    if (!id) return;
-    map.set(id, {
-      id,
-      name: String(c?.name || "").trim() || id,
-      boardSlug: String(c?.boardSlug || id).trim(),
-      domain: String(c?.domain || "").trim(),
-    });
-  });
-  return Array.from(map.values());
-}
-
-function rebuildCompanyDirectory() {
-  companyDirectory = dedupeDirectory([...(COMPANY_DIRECTORY || []), ...(extraDirectory || [])]);
-}
-
-async function rememberCompanyForSuggestions(c) {
-  if (!c?.id) return;
-
-  // Don't duplicate built-in entries
-  if (COMPANY_DIRECTORY.some((x) => x.id === c.id)) return;
-
-  extraDirectory = dedupeDirectory([...(extraDirectory || []).filter((x) => x.id !== c.id), c]).slice(-150);
-  rebuildCompanyDirectory();
-  await storageSet({ [STORAGE_DIRECTORY_KEY]: extraDirectory });
-}
-
 // ===============================
 // App state (single source of truth)
 // ===============================
@@ -202,6 +188,23 @@ function formatDate(iso) {
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString();
 }
+
+function formatShortDate(iso) {
+  if (!iso) return "—";
+  let d;
+  // Greenhouse sometimes returns epoch seconds/ms as string/number
+  if (typeof iso === "number") {
+    d = new Date(iso > 1e12 ? iso : iso * 1000);
+  } else if (/^\d+$/.test(String(iso))) {
+    const n = Number(iso);
+    d = new Date(n > 1e12 ? n : n * 1000);
+  } else {
+    d = new Date(iso);
+  }
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
 
 function normalizeDomain(domain) {
   const d = String(domain || "").trim().toLowerCase();
@@ -473,15 +476,11 @@ function wireEventsOnce() {
   try {
     wireEventsOnce();
 
-    const data = await storageGet([STORAGE_PROFILE_KEY, STORAGE_CACHE_KEY, STORAGE_TRACKED_KEY, STORAGE_DIRECTORY_KEY]);
+    const data = await storageGet([STORAGE_PROFILE_KEY, STORAGE_CACHE_KEY, STORAGE_TRACKED_KEY]);
 
     userProfile = data[STORAGE_PROFILE_KEY] || null;
     companyCache = data[STORAGE_CACHE_KEY] || {};
     trackedJobs = data[STORAGE_TRACKED_KEY] || [];
-
-    // Load extra company suggestions (persisted)
-    extraDirectory = Array.isArray(data[STORAGE_DIRECTORY_KEY]) ? data[STORAGE_DIRECTORY_KEY] : [];
-    rebuildCompanyDirectory();
 
     // Migrate old profile format if needed
     userProfile = migrateProfile(userProfile);
@@ -685,7 +684,7 @@ function renderCompanySuggestions(query) {
     return;
   }
 
-  const inDirectory = companyDirectory.filter(
+  const inDirectory = COMPANY_DIRECTORY.filter(
     (c) => c.name.toLowerCase().includes(q) || c.boardSlug.toLowerCase().includes(q)
   );
 
@@ -728,7 +727,7 @@ async function addCompanyFromInput(input) {
   const val = String(input || "").trim();
   if (!val) return;
 
-  const existing = companyDirectory.find(
+  const existing = COMPANY_DIRECTORY.find(
     (c) => c.name.toLowerCase() === val.toLowerCase() || c.boardSlug.toLowerCase() === val.toLowerCase()
   );
 
@@ -770,8 +769,6 @@ async function addCompanyFromInput(input) {
       boardSlug: slug,
       domain: "",
     };
-
-    await rememberCompanyForSuggestions(c);
 
     await addCompany(c);
 
@@ -833,7 +830,7 @@ async function removeCompany(companyId) {
 }
 
 function quickAddBigTech() {
-  const tech = companyDirectory.slice(0, 5);
+  const tech = COMPANY_DIRECTORY.slice(0, 5);
   const toAdd = tech.filter((c) => !companies.some((x) => x.id === c.id));
 
   if (!toAdd.length) {
@@ -932,6 +929,51 @@ function showCompanyJobs(companyId) {
   renderCompanyJobs(company, jobs);
 }
 
+
+function contentHashForJob(job) {
+  // hash the displayed content (keep stable, don’t include volatile timestamps)
+  const s = `${job.title || ""}|${job.location || ""}|${job.url || job.link || ""}`;
+  // lightweight hash (fine for change detection)
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return String(h);
+}
+
+function ingestJobs({ companyId, provider, fetchedJobs, prevJobs }) {
+  const now = Date.now();
+
+  const prevById = new Map((prevJobs || []).map(j => [j.id, j]));
+  const next = [];
+
+  for (const fj of fetchedJobs || []) {
+    const stableId = fj.id ?? `${provider}:${companyId}:${fj.jobId ?? fj.id}`;
+    const prev = prevById.get(stableId);
+
+    const base = {
+      ...fj,
+      id: stableId,
+      providerUpdatedAt: fj.providerUpdatedAt ?? null,
+    };
+
+    const nextHash = contentHashForJob(base);
+
+    const out = {
+      ...base,
+      firstSeenAt: prev?.firstSeenAt ?? now,
+      lastFetchedAt: now,
+      contentHash: nextHash,
+      lastChangedAt:
+        prev && prev.contentHash && prev.contentHash !== nextHash
+          ? now
+          : (prev?.lastChangedAt ?? null),
+    };
+
+    next.push(out);
+  }
+
+  return next;
+}
+
 async function refreshAllCompanies() {
   for (const c of companies) {
     try {
@@ -949,13 +991,23 @@ async function refreshAllCompanies() {
           error: String(res.error),
         };
       } else {
-        const jobs = res.jobs || [];
+        const prevJobs = companyCache[c.id]?.jobs || [];
+        const provider = "greenhouse"; // or c.provider if you store it
+
+        const jobs = ingestJobs({
+          companyId: c.id,
+          provider,
+          fetchedJobs: res.jobs || [],
+          prevJobs,
+        });
+
         companyCache[c.id] = {
           companyName: res.company?.name || c.name,
           jobs,
           fetchedAt: Date.now(),
           error: null,
         };
+
 
         reconcileTrackedJobsForCompany(c.id, jobs);
       }
@@ -1024,6 +1076,8 @@ function computeMatchSummary() {
 // ===============================
 // Render: Companies
 // ===============================
+
+
 function renderCompanies() {
   if (!companiesList) return;
   companiesList.innerHTML = "";
@@ -1033,22 +1087,53 @@ function renderCompanies() {
   companies.forEach((c) => {
     const cache = companyCache[c.id];
     const card = document.createElement("div");
-    card.className = "card";
+    card.className = "card dm-card";
 
     const logoUrl = getLogoUrl(c.domain);
-    const logoEl = logoUrl ? `<img class="logo" src="${logoUrl}" />` : `<div class="logo"></div>`;
+    const initial = (c.name || "?").trim().charAt(0).toUpperCase();
+    const logoEl = logoUrl
+      ? `<img class="logo" src="${logoUrl}" />`
+      : `<div class="logo fallback">${initial}</div>`;
 
-    if (cache?.error) {
-      card.innerHTML = `
-        <div class="company-header">
-          ${logoEl}
-          <div style="flex:1;">
-            <div class="company-name">${c.name}</div>
-            <div class="meta">Error fetching jobs</div>
-            <div class="pills"><span class="pill error">ERROR</span></div>
+    // Base skeleton
+    const header = (bodyHtml, pillHtml, showDot) => {
+      const dotCls = showDot ? "unread-dot" : "unread-dot hidden";
+      return `
+        <div class="dm-row">
+          <div class="dm-left">
+            <span class="${dotCls}"></span>
+            <div class="dm-avatar">${logoEl}</div>
+          </div>
+          <div class="dm-main">
+            <div class="dm-top">
+              <div class="dm-name">${c.name}</div>
+              <div class="dm-chevron">›</div>
+            </div>
+            <div class="dm-sub">
+              ${pillHtml || ""}
+              ${bodyHtml || ""}
+            </div>
           </div>
         </div>
       `;
+    };
+
+    // Unsupported / link-only
+    if (cache?.error === "UNSUPPORTED_PROVIDER") {
+      const pill = `<span class="pill muted">LINK</span>`;
+      card.innerHTML = header(`<span class="dm-text">Not supported yet</span>`, pill, false);
+      card.onclick = () => {
+        if (c.careersUrl) window.open(c.careersUrl, "_blank");
+      };
+      attachLogoFallback(card, c.name);
+      companiesList.appendChild(card);
+      return;
+    }
+
+    // Real fetch error
+    if (cache?.error) {
+      const pill = `<span class="pill error">ERROR</span>`;
+      card.innerHTML = header(`<span class="dm-text">Error fetching jobs</span>`, pill, false);
       card.onclick = () => showCompanyJobs(c.id);
       attachLogoFallback(card, c.name);
       companiesList.appendChild(card);
@@ -1059,46 +1144,30 @@ function renderCompanies() {
     const matches = getRelevantMatches(jobs, queries);
 
     if (matches.length === 0) {
-      card.innerHTML = `
-        <div class="company-header">
-          ${logoEl}
-          <div style="flex:1;">
-            <div class="company-name">${c.name}</div>
-            <div class="meta">No matches right now</div>
-            <div class="pills"><span class="pill">INACTIVE</span></div>
-          </div>
-        </div>
-      `;
+      const pill = `<span class="pill">INACTIVE</span>`;
+      card.innerHTML = header(`<span class="dm-text">No matches right now</span>`, pill, false);
       card.onclick = () => showCompanyJobs(c.id);
       attachLogoFallback(card, c.name);
       companiesList.appendChild(card);
       return;
     }
 
+    // Matches: show unread dot ALWAYS on this screen when there are matches
     const mostRecent = matches[0];
-    const posted = formatDate(mostRecent.job.createdAt);
+    const posted = formatShortDate(mostRecent.job.createdAt);
+    const queryLabel = mostRecent.match.query || "—";
 
-    const pills = [];
-    if (isNewJob(mostRecent.job.createdAt)) pills.push(`<span class="pill new">NEW</span>`);
-    pills.push(`<span class="pill">${matches.length} roles</span>`);
+    const pill = `<span class="pill dm-pill">${matches.length} roles</span>`;
+    const line = `<span class="dm-preview">${queryLabel} · ${posted}</span>`;
 
-    card.innerHTML = `
-      <div class="company-header">
-        ${logoEl}
-        <div style="flex:1;">
-          <div class="company-name">${c.name}</div>
-          <div class="job-title">${mostRecent.job.title}</div>
-          <div class="meta">Matched: ${mostRecent.match.query || "—"} · Posted ${posted}</div>
-          <div class="pills">${pills.join("")}</div>
-        </div>
-      </div>
-    `;
-
+    card.innerHTML = header(line, pill, true);
     card.onclick = () => showCompanyJobs(c.id);
     attachLogoFallback(card, c.name);
     companiesList.appendChild(card);
   });
 }
+
+
 
 // ===============================
 // Render: Company jobs (matched roles)
@@ -1124,15 +1193,31 @@ function renderCompanyJobs(company, jobs) {
   matches.slice(0, 15).forEach(({ job, match }) => {
     const row = document.createElement("div");
     row.className = "jobrow";
+    row.style.position = "relative"; // for top-right Seen timestamp
 
     const alreadyTracked = trackedJobs.some((t) => String(t.jobId) === String(job.id));
     const scorePct = Math.round(match.score * 100);
 
+    const { seenAt, freshnessAt } = resolveJobDates(job);
+    const seenText = `Seen: ${formatMD(seenAt)}`;
+    const titleText = `${job.title} • ${formatMD(freshnessAt)}`;
+
     row.innerHTML = `
-      <div class="jobrow-title">${job.title}</div>
+      <div class="jobrow-title">${titleText}</div>
+
+      <div class="jobrow-seen" style="
+        position:absolute;
+        top:10px;
+        right:12px;
+        font-size:12px;
+        color: var(--text-secondary);
+        font-weight:500;
+      ">${seenText}</div>
+
       <div class="jobrow-sub">
-        Matched: ${match.query || "—"} · ${scorePct}% · Posted ${formatDate(job.createdAt)}${job.location ? ` · ${job.location}` : ""}
+        Matched: ${match.query || "—"} · ${scorePct}%${job.location ? ` · ${job.location}` : ""}
       </div>
+
       <div class="jobrow-actions">
         <span class="link" data-open="1">Open</span>
         <button class="btn small">${alreadyTracked ? "Tracking" : "Track"}</button>
@@ -1157,7 +1242,7 @@ function renderCompanyJobs(company, jobs) {
         title: job.title,
         link: job.link,
         location: job.location || "",
-        createdAt: job.createdAt,
+        createdAt: job.createdAt, // keep for legacy display if needed
         status: "open",
         lastCheckedAt: Date.now(),
         lastSeenAt: Date.now(),

@@ -35,6 +35,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     // Primary path
     if (request?.type === "FETCH_COMPANY_JOBS") {
+      const provider = String(request.provider || "greenhouse").trim().toLowerCase();
       const slug = String(request.boardSlug || "").trim().toLowerCase();
       const fallbackName = String(request.companyName || "").trim();
 
@@ -43,7 +44,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return false;
       }
 
-      fetchGreenhouseJobs(slug, fallbackName, sendResponse);
+      if (provider === "lever") {
+        fetchLeverJobs(slug, fallbackName, sendResponse);
+      } else {
+        fetchGreenhouseJobs(slug, fallbackName, sendResponse);
+      }
       return true;
     }
 
@@ -71,6 +76,37 @@ function fetchGreenhouseJobs(boardSlug, fallbackCompanyName, sendResponse) {
         link: job.absolute_url,
         createdAt: job.created_at,
         location: job.location?.name || ""
+      }));
+
+      sendResponse({
+        company: { name: companyName, slug: boardSlug },
+        jobs
+      });
+    })
+    .catch((err) => {
+      sendResponse({ error: String(err) });
+    });
+}
+
+function fetchLeverJobs(boardSlug, fallbackCompanyName, sendResponse) {
+  const url = `https://api.lever.co/v0/postings/${encodeURIComponent(boardSlug)}?mode=json`;
+
+  fetch(url)
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then((data) => {
+      if (!Array.isArray(data)) throw new Error("Unexpected Lever response");
+
+      const companyName = fallbackCompanyName || boardSlug;
+
+      const jobs = data.map((job) => ({
+        id: job.id,
+        title: job.text || job.title || "Untitled",
+        link: job.hostedUrl || job.applyUrl || "",
+        createdAt: job.createdAt ? new Date(job.createdAt).toISOString() : "",
+        location: job.categories?.location || ""
       }));
 
       sendResponse({
