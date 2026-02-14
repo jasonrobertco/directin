@@ -1096,7 +1096,7 @@ function renderCompanies() {
       : `<div class="logo fallback">${initial}</div>`;
 
     // Base skeleton
-    const header = (bodyHtml, pillHtml, showDot) => {
+    const header = (bodyHtml, pillHtml, showDot, freshnessAt) => {
       const dotCls = showDot ? "unread-dot" : "unread-dot hidden";
       return `
         <div class="dm-row">
@@ -1107,7 +1107,11 @@ function renderCompanies() {
           <div class="dm-main">
             <div class="dm-top">
               <div class="dm-name">${c.name}</div>
-              <div class="dm-chevron">›</div>
+              <div class="dm-topright">
+  <span class="dm-updated">${freshnessAt ? formatMD(freshnessAt) : ""}</span>
+  <span class="dm-chevron">›</span>
+</div>
+
             </div>
             <div class="dm-sub">
               ${pillHtml || ""}
@@ -1154,13 +1158,17 @@ function renderCompanies() {
 
     // Matches: show unread dot ALWAYS on this screen when there are matches
     const mostRecent = matches[0];
-    const posted = formatShortDate(mostRecent.job.createdAt);
+    const { freshnessAt } = resolveJobDates(mostRecent.job);
+
     const queryLabel = mostRecent.match.query || "—";
+    const freshMD = formatMD(freshnessAt);
 
     const pill = `<span class="pill dm-pill">${matches.length} roles</span>`;
-    const line = `<span class="dm-preview">${queryLabel} · ${posted}</span>`;
+    const line = `<span class="dm-preview">${queryLabel}</span>`;
 
-    card.innerHTML = header(line, pill, true);
+    card.innerHTML = header(line, pill, true, freshnessAt);
+
+
     card.onclick = () => showCompanyJobs(c.id);
     attachLogoFallback(card, c.name);
     companiesList.appendChild(card);

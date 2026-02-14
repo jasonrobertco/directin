@@ -39,8 +39,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const slug = String(request.boardSlug || "").trim().toLowerCase();
       const fallbackName = String(request.companyName || "").trim();
 
-      if (!slug) {
+      if (!slug && provider !== "custom") {
         sendResponse({ error: "Missing boardSlug" });
+        return false;
+      }
+
+      if (provider === "custom") {
+        sendResponse({ error: "UNSUPPORTED_PROVIDER" });
         return false;
       }
 
@@ -49,8 +54,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       } else {
         fetchGreenhouseJobs(slug, fallbackName, sendResponse);
       }
+
       return true;
     }
+
 
     return false;
   } catch (err) {
@@ -89,7 +96,7 @@ function fetchGreenhouseJobs(boardSlug, fallbackCompanyName, sendResponse) {
 }
 
 function fetchLeverJobs(boardSlug, fallbackCompanyName, sendResponse) {
-  const url = `https://api.lever.co/v0/postings/${encodeURIComponent(boardSlug)}?mode=json`;
+  const url = `https://jobs.lever.co/${encodeURIComponent(boardSlug)}?mode=json`;
 
   fetch(url)
     .then((res) => {

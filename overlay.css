@@ -18,7 +18,7 @@
   --border-light: rgba(10, 102, 194, 0.08);
   
   /* Backgrounds */
-  --bg: #ffffff;
+  --bg: #F5F5F7;
   --bg-hover: rgba(10, 102, 194, 0.04);
   --bg-selected: var(--blue-light);
 }
@@ -110,7 +110,27 @@ button, input, textarea {
   min-height: 0;
   overflow-y: auto;
   padding-bottom: 12px;
+  padding-right: 8px;
+  margin-right: -8px;
 }
+
+.view::-webkit-scrollbar {
+  width: 6px;
+}
+
+.view::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.view::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 999px;
+}
+
+.view::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.28);
+}
+
 
 .h1 {
   font-size: 22px;
@@ -369,18 +389,21 @@ button, input, textarea {
 
 /* Company card */
 .card {
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);   /* darker, neutral border */
+  border-radius: 14px;
   padding: 14px;
-  background: var(--bg);
+  background: #FFFFFF;                    /* brighter than page */
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
+
 .card:hover {
-  background: var(--bg-hover);
-  border-color: var(--border);
+  background: #FFFFFF;
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
+
 
 .company-header {
   display: flex;
@@ -630,7 +653,8 @@ button, input, textarea {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  padding-right: 22px;  /* space so name doesn't run under chevron */
+  position: relative;
+  padding-right: 46px;  /* space so name doesn't run under chevron */
 }
 
 /* Company title should match old style */
@@ -646,9 +670,7 @@ button, input, textarea {
 
 /* Chevron back to top-right like before */
 .dm-chevron {
-  position: absolute;
-  right: 2px;
-  top: 2px;
+  position: static;
   font-size: 18px;
   opacity: 0.45;
   line-height: 1;
@@ -673,7 +695,7 @@ button, input, textarea {
 .dm-preview {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 13px;      /* same as .meta */
+  font-size: 12px;      /* same as .meta */
   font-weight: 500;
   letter-spacing: -0.1px;
   color: #4B5563;       /* darker than --text-secondary */
@@ -681,3 +703,22 @@ button, input, textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.dm-topright {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dm-updated {
+  font-size: 13px;
+  font-weight: 500;
+  color: #6B7280;
+  line-height: 1;
+}
+
+
+
