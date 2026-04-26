@@ -24,7 +24,7 @@ function formatMD(ms) {
   if (Number.isNaN(d.getTime())) return "—";
   return `${d.getMonth() + 1}/${d.getDate()}`; // no leading zeros
 }
-
+ 
 function resolveJobDates(job) {
   const seenAt = job?.firstSeenAt ?? null;
 
